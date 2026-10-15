@@ -5,10 +5,12 @@ import StoryTimeline from "@/components/StoryTimeline.vue";
 import TimeScrubber from "@/components/TimeScrubber.vue";
 import EntityDrawer from "@/components/EntityDrawer.vue";
 import { useLibraryStore } from "@/stores/library";
+import type { SiteSelection } from "@/types/schema";
 
 const library = useLibraryStore();
 const activeIndex = ref(0);
 const selectedEntityId = ref<number | null>(null);
+const selectedSite = ref<SiteSelection | null>(null);
 
 const timeline = computed(() => library.timeline);
 const chapters = computed(() => timeline.value?.chapters ?? []);
@@ -16,17 +18,51 @@ const entities = computed(() => timeline.value?.entities ?? []);
 const events = computed(() => timeline.value?.events ?? []);
 
 const currentChapter = computed(() => chapters.value[activeIndex.value]);
-
 const selectedEntity = computed(() => entities.value.find((e) => e.id === selectedEntityId.value) ?? null);
-
 const selectedEvents = computed(() =>
   selectedEntityId.value == null ? [] : events.value.filter((e) => e.entity_id === selectedEntityId.value),
 );
 
+const worldOf = (w?: string | null) => w || "未知空间";
+const siteOf = (c: { world?: string | null; region?: string | null; site?: string | null }) =>
+  c.site || c.region || worldOf(c.world);
+
+/// 选中地点的元数据：章节、人物、物品、时间标记。
+const siteMeta = computed(() => {
+  if (!selectedSite.value) return null;
+  const { world, site } = selectedSite.value;
+  const indexes = new Set<number>();
+  const siteChapters = chapters.value.filter((c) => {
+    if (worldOf(c.world) === world && siteOf(c) === site) {
+      indexes.add(c.chapter_index);
+      return true;
+    }
+    return false;
+  });
+  const evs = events.value.filter((e) => indexes.has(e.chapter_index));
+  const chars = entities.value.filter(
+    (e) => e.entity_type === "CHARACTER" && evs.some((v) => v.entity_id === e.id),
+  );
+  const items = entities.value.filter(
+    (e) =>
+      e.entity_type !== "CHARACTER" &&
+      (evs.some((v) => v.entity_id === e.id) || evs.some((v) => v.acquired_site?.includes(site))),
+  );
+  const temporals = siteChapters
+    .filter((c) => c.temporal_type && c.temporal_type !== "CONTINUOUS" && c.temporal_type !== "UNCERTAIN")
+    .map((c) => ({ index: c.chapter_index, type: c.temporal_type as string, days: c.time_offset_days ?? 0 }));
+  return { world, site, region: siteChapters[0]?.region ?? null, chapters: siteChapters, chars, items, temporals };
+});
+
 watch(chapters, () => {
   activeIndex.value = 0;
   selectedEntityId.value = null;
+  selectedSite.value = null;
 });
+
+function seek(i: number) {
+  activeIndex.value = Math.max(0, Math.min(chapters.value.length - 1, i));
+}
 </script>
 
 <template>
@@ -38,7 +74,7 @@ watch(chapters, () => {
         </div>
         <h2 class="text-lg font-semibold text-slate-200">尚无可视化数据</h2>
         <p class="mt-2 text-sm text-slate-500">
-          请先在「图书馆」导入电子书并运行批量抽取，抽取完成后即可在此查看拓扑空间图与双轴时间线。
+          请先在「图书馆」导入电子书并运行批量抽取，抽取完成后即可在此查看拓扑空间图与时间线。
         </p>
       </div>
     </div>
@@ -46,15 +82,103 @@ watch(chapters, () => {
     <div v-else class="flex h-full min-h-0 flex-col">
       <div class="flex min-h-0 flex-1">
         <div class="flex min-w-0 flex-1 flex-col">
-          <div class="min-h-0 flex-1">
+          <div class="relative min-h-0 flex-1">
             <SpaceGraph
               :chapters="chapters"
               :entities="entities"
               :events="events"
               :active-index="activeIndex"
               :highlight-entity-id="selectedEntityId"
+              @select="selectedSite = $event"
             />
+
+            <!-- 地点元数据面板 -->
+            <transition name="fade">
+              <div
+                v-if="siteMeta"
+                class="absolute right-3 top-3 w-72 overflow-hidden rounded-xl border border-ink-500/60 bg-ink-800/90 shadow-xl backdrop-blur"
+              >
+                <div class="flex items-start gap-2 border-b border-ink-600/60 px-4 py-3">
+                  <i class="fa-solid fa-location-dot mt-0.5 text-jade-400" />
+                  <div class="min-w-0 flex-1">
+                    <h4 class="truncate font-semibold text-slate-100">{{ siteMeta.site }}</h4>
+                    <p class="text-[11px] text-slate-500">
+                      {{ siteMeta.world }}<template v-if="siteMeta.region"> · {{ siteMeta.region }}</template>
+                    </p>
+                  </div>
+                  <button class="text-slate-500 hover:text-slate-200" @click="selectedSite = null">
+                    <i class="fa-solid fa-xmark" />
+                  </button>
+                </div>
+
+                <div class="max-h-[22rem] space-y-3 overflow-y-auto px-4 py-3 text-xs">
+                  <div>
+                    <div class="mb-1 text-[11px] uppercase tracking-wide text-slate-500">出现章节 ({{ siteMeta.chapters.length }})</div>
+                    <div class="flex flex-wrap gap-1">
+                      <button
+                        v-for="c in siteMeta.chapters"
+                        :key="c.id"
+                        class="rounded border px-1.5 py-0.5 text-[11px] transition"
+                        :class="
+                          c.chapter_index === activeIndex
+                            ? 'border-gold-400 text-gold-400'
+                            : 'border-ink-600 text-slate-400 hover:border-jade-500 hover:text-jade-400'
+                        "
+                        @click="seek(c.chapter_index)"
+                      >
+                        {{ c.chapter_index + 1 }}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div v-if="siteMeta.chars.length">
+                    <div class="mb-1 text-[11px] uppercase tracking-wide text-slate-500">人物 ({{ siteMeta.chars.length }})</div>
+                    <div class="flex flex-wrap gap-1">
+                      <span
+                        v-for="p in siteMeta.chars"
+                        :key="p.id"
+                        class="rounded-full border border-jade-500/40 bg-jade-500/10 px-2 py-0.5 text-[11px] text-jade-300"
+                        :title="p.description || ''"
+                      >
+                        {{ p.name }}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div v-if="siteMeta.items.length">
+                    <div class="mb-1 text-[11px] uppercase tracking-wide text-slate-500">物品 / 功法 ({{ siteMeta.items.length }})</div>
+                    <div class="flex flex-wrap gap-1">
+                      <button
+                        v-for="it in siteMeta.items"
+                        :key="it.id"
+                        class="rounded-full border border-gold-400/40 bg-gold-400/10 px-2 py-0.5 text-[11px] text-gold-400 hover:border-gold-400"
+                        :title="it.description || ''"
+                        @click="selectedEntityId = it.id"
+                      >
+                        {{ it.name }}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div v-if="siteMeta.temporals.length">
+                    <div class="mb-1 text-[11px] uppercase tracking-wide text-slate-500">时间标记</div>
+                    <ul class="space-y-1 text-slate-400">
+                      <li v-for="t in siteMeta.temporals" :key="t.index">
+                        <span class="text-slate-500">第 {{ t.index + 1 }} 章</span>
+                        <span class="ml-1 text-jade-400">{{ t.type }}</span>
+                        <span v-if="t.days" class="ml-1 text-gold-400">+{{ t.days }} 天</span>
+                      </li>
+                    </ul>
+                  </div>
+
+                  <p v-if="!siteMeta.chars.length && !siteMeta.items.length && !siteMeta.temporals.length" class="text-slate-500">
+                    暂无更多元数据。
+                  </p>
+                </div>
+              </div>
+            </transition>
           </div>
+
           <div class="space-y-2 p-3">
             <StoryTimeline
               :chapters="chapters"
@@ -102,7 +226,7 @@ watch(chapters, () => {
               v-for="ev in selectedEvents"
               :key="ev.id"
               class="min-w-[200px] shrink-0 rounded-lg border border-ink-600/60 px-3 py-2 text-left transition hover:border-jade-500"
-              @click="activeIndex = chapters.findIndex((c) => c.chapter_index === ev.chapter_index)"
+              @click="seek(ev.chapter_index)"
             >
               <div class="text-xs text-gold-400">第 {{ ev.chapter_index + 1 }} 章 · {{ ev.action_type }}</div>
               <div v-if="ev.role" class="text-[11px] text-slate-400">角色：{{ ev.role }}</div>
@@ -126,6 +250,14 @@ watch(chapters, () => {
 .slide-up-enter-from,
 .slide-up-leave-to {
   transform: translateY(100%);
+  opacity: 0;
+}
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.2s ease;
+}
+.fade-enter-from,
+.fade-leave-to {
   opacity: 0;
 }
 </style>

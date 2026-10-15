@@ -1,6 +1,6 @@
 # 时空编年史 · ChronoSpace Reader
 
-> 当前版本：**v0.1.9**
+> 当前版本：**v0.1.10**
 
 **ChronoSpace Reader（时空编年史）** 是一款跨平台桌面应用，使用 **Tauri 2.0（Rust）+ Vue 3（Vite / Pinia / TypeScript / TailwindCSS）** 构建。
 它把 EPUB / MOBI / AZW3 电子书**在内存中**解析分章，借助**本地大模型**（LM Studio 或 Ollama，OpenAI 兼容 API）抽取**时间、空间、人物、物品/功法与因果**结构，持久化到本地 SQLite，并以**交互式时空图谱**呈现，一键导出可部署到 GitHub Pages 的**零依赖单页 HTML**。
@@ -21,12 +21,13 @@
 - **叙事视角归一化**：同时支持第一/第三人称，自动将「我」解析为主角规范名或 `PROTAGONIST_FIRST_PERSON`。
 - **批量抽取运行器**：暂停 / 继续 / 取消、章节进度条、**逐章 SQLite 事务检查点**（可断点续跑）。**支持多本并发**：每个任务按书籍独立跟踪，可暂停一本并同时抽取另一本。
 - **动态时空画布**：
-  - 拓扑空间图（Cytoscape.js），确定性布局：每个 `world`（人界 / 灵界…）一行，其下 `site` 环状排布；边的颜色区分移动类型（STAY / TELEPORT / ASCENSION / DUNGEON…）。
+  - 拓扑空间图（Cytoscape.js），确定性布局：每个 `world`（人界 / 灵界…）一块网格，`site` 卡片式排布；边的颜色区分移动类型（STAY / TELEPORT / ASCENSION / DUNGEON…）。**点击地点卡片查看元数据**（出现章节、人物、物品/功法、时间标记）。
   - **可视化时间线**：章节刻度、时间跳跃（▲）/ 倒叙（▼）标记与天数增量，点击跳转；实体事件高亮。
   - 双轴时间滑块（章节轴 + 虚拟故事时间线），拖动时主角令牌沿节点动画迁移。
   - 物品/功法谱系抽屉：点击「掌天瓶」高亮其首次出现章节，并追溯其后触发的全部章节。
 - **静态 HTML 导出**：内联全部 JSON 数据，生成可直接上传 GitHub Pages 的单页交互式查看器。
-- **JSON 修复容错**：模型输出非法 JSON 时自动本地修复，并最多重试 3 次（JSON 修复提示词）。
+- **JSON 修复容错**：模型输出非法 JSON 时自动本地修复——平衡括号提取、去除注释/尾随逗号、**转义字符串内裸控制字符**（修复 `control character found while parsing a string` 类错误），失败后再用修复提示词重试 ≤3 次。
+- **重要操作确认**：删除书籍、取消抽取等破坏性操作均弹出确认对话框。
 
 ---
 
@@ -154,7 +155,7 @@ npm run tauri:build
 npm run test          # 等价于 npm run test:rust -> cargo test
 ```
 
-- **单元测试**（`#[cfg(test)]`，共 38 项）：`parser::util`（HTML 清洗/实体解码/哈希/标题推测）、`parser::encoding`（UTF-8 / GBK / BOM / XML 编码嗅探 / 中文可读性打分）、`parser::epub`（内存 ZIP 构造的端到端 EPUB 解析、NCX/EPUB3 nav 合订本探测、UTF-8 边界安全的标题抽取）、`parser::mobi`（PalmDOC 解压）、`parser::mod`（格式探测 + 合订本拆分与再索引）、`pipeline`（JSON 修复/重试/分块/视角归一化）、`db`（模式 + 持久化 + 级联删除 + 幂等）、`paths`（数据目录解析）。
+- **单元测试**（`#[cfg(test)]`，共 40 项）：`parser::util`（HTML 清洗/实体解码/哈希/标题推测）、`parser::encoding`（UTF-8 / GBK / BOM / XML 编码嗅探 / 中文可读性打分）、`parser::epub`（内存 ZIP 构造的端到端 EPUB 解析、NCX/EPUB3 nav 合订本探测、UTF-8 边界安全的标题抽取）、`parser::mobi`（PalmDOC 解压）、`parser::mod`（格式探测 + 合订本拆分与再索引）、`pipeline`（JSON 修复/重试/分块/视角归一化）、`db`（模式 + 持久化 + 级联删除 + 幂等）、`paths`（数据目录解析）。
 - **集成测试**（`src-tauri/tests/pipeline_db_roundtrip.rs`）：通过公开 API 验证「LLM JSON → SQLite → 时空聚合查询」全链路。
 
 前端目前仅有类型检查（`npm run typecheck`）。

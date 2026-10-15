@@ -37,6 +37,17 @@ function start() {
   }
   extraction.start(bookId.value);
 }
+
+async function cancel() {
+  if (!bookId.value) return;
+  const ok = await ui.askConfirm({
+    title: "取消抽取",
+    message: `确认取消《${book.value?.title}》的抽取任务？已完成章节的进度会保留。`,
+    confirmLabel: "取消任务",
+    danger: true,
+  });
+  if (ok) extraction.cancel(bookId.value);
+}
 </script>
 
 <template>
@@ -76,7 +87,7 @@ function start() {
           <button v-else class="btn-primary" @click="extraction.resume(bookId!)">
             <i class="fa-solid fa-play" />继续
           </button>
-          <button class="btn-danger" @click="extraction.cancel(bookId!)">
+          <button class="btn-danger" @click="cancel">
             <i class="fa-solid fa-stop" />取消
           </button>
         </template>

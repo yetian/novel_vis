@@ -256,20 +256,83 @@ pub fn parse_extraction(raw: &str) -> AppResult<(SegmentExtraction, bool)> {
     }
 }
 
+/// 提取首个「平衡」的 JSON 对象：正确处理字符串与转义，
+/// 因此可容忍前后缀文本、Markdown 代码块，以及被 `[ ... ]` 包裹的对象。
 fn extract_json_block(raw: &str) -> Option<String> {
     let start = raw.find('{')?;
-    let end = raw.rfind('}')?;
-    if end <= start {
-        return None;
+    let mut depth: i32 = 0;
+    let mut in_string = false;
+    let mut escaped = false;
+    for (offset, ch) in raw[start..].char_indices() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match ch {
+            '"' => in_string = true,
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(raw[start..start + offset + ch.len_utf8()].to_string());
+                }
+            }
+            _ => {}
+        }
     }
-    Some(raw[start..=end].to_string())
+    None
 }
 
 fn repair_json_text(input: &str) -> String {
     let no_block = BLOCK_COMMENT_RE.replace_all(input, "");
     let no_line = LINE_COMMENT_RE.replace_all(&no_block, "");
     let no_trailing = TRAILING_COMMA_RE.replace_all(&no_line, "$1");
-    no_trailing.to_string()
+    escape_control_chars_in_strings(&no_trailing)
+}
+
+/// 转义字符串字面量内的裸控制字符（\u0000-\u001F）。
+/// 小模型常在 JSON 字符串里直接输出换行/制表符，导致 serde_json 报
+/// “control character found while parsing a string”。
+fn escape_control_chars_in_strings(input: &str) -> String {
+    let mut out = String::with_capacity(input.len() + 16);
+    let mut in_string = false;
+    let mut escaped = false;
+    for ch in input.chars() {
+        if in_string {
+            if escaped {
+                out.push(ch);
+                escaped = false;
+                continue;
+            }
+            match ch {
+                '\\' => {
+                    out.push('\\');
+                    escaped = true;
+                }
+                '"' => {
+                    out.push('"');
+                    in_string = false;
+                }
+                '\n' => out.push_str("\\n"),
+                '\r' => out.push_str("\\r"),
+                '\t' => out.push_str("\\t"),
+                c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+                c => out.push(c),
+            }
+        } else {
+            if ch == '"' {
+                in_string = true;
+            }
+            out.push(ch);
+        }
+    }
+    out
 }
 
 fn normalize_value(value: &mut Value) {
@@ -553,6 +616,25 @@ mod tests {
     #[test]
     fn parse_extraction_errors_without_json() {
         assert!(parse_extraction("完全没有 JSON 对象").is_err());
+    }
+
+    #[test]
+    fn extract_json_block_handles_array_and_trailing_text() {
+        assert_eq!(extract_json_block("结果：[ {\"a\":1}, {\"b\":2} ] 完").unwrap(), "{\"a\":1}");
+        assert_eq!(
+            extract_json_block("{\"temporal\":{\"type\":\"CONTINUOUS\"}}尾").unwrap(),
+            "{\"temporal\":{\"type\":\"CONTINUOUS\"}}"
+        );
+    }
+
+    #[test]
+    fn parse_extraction_repairs_raw_control_chars() {
+        // 字符串内直接包含换行/制表符（未转义）——小模型常见错误。
+        let broken = "{\"plot_summary\":\"第一行\n第二行\t结束\",\"characters\":[],\"items_and_skills\":[]}";
+        let (ext, repaired) = parse_extraction(broken).unwrap();
+        assert!(repaired);
+        assert!(ext.plot_summary.contains("第一行"));
+        assert!(ext.plot_summary.contains("第二行"));
     }
 
     #[test]

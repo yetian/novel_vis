@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, onBeforeUnmount, ref, watch } from "vue";
 import cytoscape, { type Core, type ElementDefinition } from "cytoscape";
-import type { ChapterRow, EntityEventRow, EntityRow } from "@/types/schema";
+import type { ChapterRow, EntityEventRow, EntityRow, SiteSelection } from "@/types/schema";
 
 const props = defineProps<{
   chapters: ChapterRow[];
@@ -10,16 +10,17 @@ const props = defineProps<{
   activeIndex: number;
   highlightEntityId: number | null;
 }>();
+const emit = defineEmits<{ (e: "select", payload: SiteSelection | null): void }>();
 
 const container = ref<HTMLDivElement | null>(null);
 let cy: Core | null = null;
 
 const worldOf = (c: ChapterRow) => c.world || "未知空间";
 const siteOf = (c: ChapterRow) => c.site || c.region || worldOf(c);
-const siteId = (c: ChapterRow) => `site::${worldOf(c)}::${siteOf(c)}`;
+const siteKey = (c: ChapterRow) => `${worldOf(c)}::${siteOf(c)}`;
 
 const MOVEMENT_COLORS: Record<string, string> = {
-  STAY: "#3a465e",
+  STAY: "#334155",
   LOCAL_MOVE: "#20c997",
   TELEPORT: "#b197fc",
   ASCENSION: "#f0b429",
@@ -27,12 +28,16 @@ const MOVEMENT_COLORS: Record<string, string> = {
   DUNGEON_EXIT: "#4dabf7",
 };
 
+// 每个世界一块网格，地点按格子排布，世界横向排列。
+const CELL_W = 148;
+const CELL_H = 96;
+const GAP = 150;
+
 interface Layout {
   positions: Map<string, { x: number; y: number }>;
   weights: Map<string, number>;
 }
 
-/// 确定性布局：每个世界一行，其下的地点绕世界中心环形排布。
 function computeLayout(): Layout {
   const worldOrder: string[] = [];
   const sitesByWorld = new Map<string, string[]>();
@@ -45,33 +50,35 @@ function computeLayout(): Layout {
       sitesByWorld.set(world, []);
       worldOrder.push(world);
     }
-    const sid = siteId(c);
-    if (!seen.has(sid)) {
-      seen.add(sid);
-      sitesByWorld.get(world)!.push(sid);
-      weights.set(sid, 0);
+    const key = siteKey(c);
+    if (!seen.has(key)) {
+      seen.add(key);
+      sitesByWorld.get(world)!.push(key);
+      weights.set(key, 0);
     }
-    weights.set(sid, (weights.get(sid) ?? 0) + 1);
+    weights.set(key, (weights.get(key) ?? 0) + 1);
   }
 
-  const maxSites = Math.max(1, ...worldOrder.map((w) => sitesByWorld.get(w)!.length));
-  const radius = 90 + maxSites * 12;
-  const worldGap = radius * 2 + 180;
-
   const positions = new Map<string, { x: number; y: number }>();
-  worldOrder.forEach((world, wi) => {
-    const cx = wi * worldGap;
+  let cursorX = 0;
+  worldOrder.forEach((world) => {
     const sites = sitesByWorld.get(world)!;
-    positions.set(`world::${world}`, { x: cx, y: 0 });
     const n = sites.length;
-    sites.forEach((sid, i) => {
-      if (n === 1) {
-        positions.set(sid, { x: cx, y: 0 });
-      } else {
-        const angle = -Math.PI / 2 + (i * 2 * Math.PI) / n;
-        positions.set(sid, { x: cx + radius * Math.cos(angle), y: radius * Math.sin(angle) });
-      }
+    const cols = n <= 3 ? Math.max(1, n) : Math.ceil(Math.sqrt(n));
+    const rows = Math.ceil(n / cols);
+    const blockW = cols * CELL_W;
+    const blockH = rows * CELL_H;
+
+    positions.set(`world::${world}`, { x: cursorX + blockW / 2, y: 0 });
+    sites.forEach((key, i) => {
+      const col = i % cols;
+      const row = Math.floor(i / cols);
+      positions.set(key, {
+        x: cursorX + col * CELL_W + CELL_W / 2,
+        y: -blockH / 2 + row * CELL_H + CELL_H / 2,
+      });
     });
+    cursorX += blockW + GAP;
   });
 
   return { positions, weights };
@@ -88,28 +95,26 @@ function buildElements(): ElementDefinition[] {
   }
   for (const [id, pos] of positions) {
     if (id.startsWith("site::")) {
-      const label = id.split("::")[2];
-      const worldId = `world::${id.split("::")[1]}`;
+      const [, world, site] = id.split("::");
       elements.push({
-        data: { id, label, kind: "site", parent: worldId, weight: weights.get(id) ?? 1 },
+        data: { id, label: site, kind: "site", parent: `world::${world}`, weight: weights.get(id) ?? 1 },
         position: pos,
       });
     }
   }
 
   for (let i = 1; i < props.chapters.length; i++) {
-    const prev = props.chapters[i - 1];
-    const cur = props.chapters[i];
-    const src = siteId(prev);
-    const dst = siteId(cur);
+    const src = siteKey(props.chapters[i - 1]);
+    const dst = siteKey(props.chapters[i]);
     if (src !== dst) {
+      const movement = props.chapters[i].movement_type || "STAY";
       elements.push({
         data: {
           id: `edge::${i}`,
           source: src,
           target: dst,
-          movement: cur.movement_type || "STAY",
-          color: MOVEMENT_COLORS[cur.movement_type || "STAY"] || "#3a465e",
+          movement,
+          color: MOVEMENT_COLORS[movement] || "#334155",
         },
       });
     }
@@ -123,40 +128,40 @@ const style: cytoscape.StylesheetJson = [
   {
     selector: 'node[kind="world"]',
     style: {
-      "background-color": "rgba(240,180,41,0.04)",
-      "background-opacity": 1,
-      "border-color": "#f0b429",
-      "border-opacity": 0.45,
+      "background-color": "rgba(148,163,184,0.03)",
+      "border-color": "#334155",
       "border-width": 1,
       "border-style": "dashed",
       shape: "round-rectangle",
       label: "data(label)",
-      color: "#f0b429",
+      color: "#94a3b8",
       "font-size": 13,
       "font-weight": 600,
       "text-valign": "top",
       "text-halign": "center",
-      "text-margin-y": -6,
+      "text-margin-y": -8,
+      "text-outline-width": 2,
+      "text-outline-color": "#0b0e14",
       padding: "26px",
     },
   },
   {
     selector: 'node[kind="site"]',
     style: {
-      "background-color": "#20c997",
-      "background-opacity": 0.9,
-      "border-color": "#0b0e14",
-      "border-width": 2,
-      width: "mapData(weight, 1, 12, 18, 46)",
-      height: "mapData(weight, 1, 12, 18, 46)",
+      shape: "round-rectangle",
+      "background-color": "rgba(32,201,151,0.10)",
+      "border-color": "#2f7d68",
+      "border-width": 1,
+      width: 104,
+      height: 34,
       label: "data(label)",
-      color: "#cdd6e6",
+      color: "#c9e8de",
       "font-size": 10,
-      "text-valign": "bottom",
+      "text-valign": "center",
       "text-halign": "center",
-      "text-margin-y": 6,
-      "text-outline-width": 2,
-      "text-outline-color": "#0b0e14",
+      "text-wrap": "wrap",
+      "text-max-width": "92px",
+      "text-outline-width": 0,
     },
   },
   {
@@ -166,23 +171,29 @@ const style: cytoscape.StylesheetJson = [
       "line-color": "data(color)",
       "target-arrow-color": "data(color)",
       "target-arrow-shape": "triangle",
-      "arrow-scale": 0.9,
-      width: 1.6,
-      opacity: 0.7,
+      "arrow-scale": 0.8,
+      width: 1.4,
+      opacity: 0.5,
     },
+  },
+  {
+    selector: 'node[kind="site"].weighty',
+    style: { "border-color": "#38d9a9", "border-width": 2 },
   },
   {
     selector: "node.active",
     style: {
       "background-color": "#f0b429",
+      "background-opacity": 1,
       "border-color": "#ffffff",
-      "border-width": 3,
+      "border-width": 2,
+      color: "#0b0e14",
       "z-index": 90,
     },
   },
   {
     selector: "node.trail",
-    style: { "border-color": "#f0b429", "border-width": 3, "border-style": "solid", "z-index": 80 },
+    style: { "border-color": "#f0b429", "border-width": 2, "z-index": 80 },
   },
   {
     selector: 'node[kind="token"]',
@@ -196,7 +207,7 @@ const style: cytoscape.StylesheetJson = [
       "font-size": 10,
       "font-weight": 700,
       "text-valign": "center",
-      "text-margin-y": -22,
+      "text-margin-y": -24,
       "text-outline-width": 2,
       "text-outline-color": "#0b0e14",
       "z-index": 100,
@@ -204,7 +215,7 @@ const style: cytoscape.StylesheetJson = [
   },
   {
     selector: "edge.active",
-    style: { "line-color": "#f0b429", "target-arrow-color": "#f0b429", width: 3, opacity: 1, "z-index": 70 },
+    style: { "line-color": "#f0b429", "target-arrow-color": "#f0b429", width: 2.6, opacity: 1, "z-index": 70 },
   },
 ];
 
@@ -214,11 +225,22 @@ function initGraph() {
     container: container.value,
     elements: buildElements(),
     style,
-    layout: { name: "preset", fit: true, padding: 70 },
+    layout: { name: "preset", fit: true, padding: 72 },
     wheelSensitivity: 0.2,
     minZoom: 0.2,
     maxZoom: 3,
   });
+
+  cy.on("tap", 'node[kind="site"]', (evt) => {
+    const data = evt.target.data();
+    const id: string = data.id;
+    const [, world, site] = id.split("::");
+    emit("select", { world, site });
+  });
+  cy.on("tap", (evt) => {
+    if (evt.target === cy) emit("select", null);
+  });
+
   updateActive(false);
   updateTrail();
 }
@@ -228,12 +250,12 @@ function updateActive(animate = true) {
   const chapter = props.chapters[props.activeIndex];
   if (!chapter) return;
   cy.nodes().removeClass("active");
-  const node = cy.getElementById(siteId(chapter));
+  const node = cy.getElementById(siteKey(chapter));
   if (node.length) {
     node.addClass("active");
     const token = cy.getElementById("token");
     if (token.length) token.position(node.position());
-    if (animate) cy.animate({ center: { eles: node }, zoom: 1.15, duration: 350 });
+    if (animate) cy.animate({ center: { eles: node }, zoom: 1.2, duration: 350 });
   }
   const edge = cy.getElementById(`edge::${props.activeIndex}`);
   if (edge.length) edge.addClass("active");
@@ -253,7 +275,7 @@ function updateTrail() {
   for (const i of indexes) {
     const chapter = props.chapters.find((c) => c.chapter_index === i);
     if (!chapter) continue;
-    const node = cy.getElementById(siteId(chapter));
+    const node = cy.getElementById(siteKey(chapter));
     if (node.length) node.addClass("trail");
   }
 }
@@ -263,16 +285,17 @@ function zoomBy(factor: number) {
   cy.zoom({ level: cy.zoom() * factor, renderedPosition: { x: cy.width() / 2, y: cy.height() / 2 } });
 }
 function fit() {
-  cy?.fit(undefined, 70);
+  cy?.fit(undefined, 72);
+}
+
+function resize() {
+  cy?.resize();
 }
 
 onMounted(() => {
   initGraph();
   window.addEventListener("resize", resize);
 });
-function resize() {
-  cy?.resize();
-}
 onBeforeUnmount(() => {
   window.removeEventListener("resize", resize);
   cy?.destroy();
@@ -285,7 +308,7 @@ watch(
     if (!cy) return;
     cy.elements().remove();
     cy.add(buildElements());
-    cy.layout({ name: "preset", fit: true, padding: 70 }).run();
+    cy.layout({ name: "preset", fit: true, padding: 72 }).run();
     updateActive(false);
     updateTrail();
   },
@@ -295,7 +318,7 @@ watch(() => props.highlightEntityId, updateTrail);
 </script>
 
 <template>
-  <div class="relative h-full w-full">
+  <div class="graph-bg relative h-full w-full">
     <div ref="container" class="h-full w-full" />
 
     <div class="absolute bottom-3 right-3 flex flex-col gap-1">
@@ -304,13 +327,23 @@ watch(() => props.highlightEntityId, updateTrail);
       <button class="btn-ghost !p-2" title="适应窗口" @click="fit"><i class="fa-solid fa-expand" /></button>
     </div>
 
-    <div class="pointer-events-none absolute left-3 top-3 rounded-lg border border-ink-600/60 bg-ink-800/70 px-3 py-2 text-[11px] text-slate-400 backdrop-blur">
-      <div class="mb-1 font-medium text-slate-300">空间图谱</div>
+    <div class="pointer-events-none absolute left-3 top-3 rounded-lg border border-ink-600/50 bg-ink-800/60 px-3 py-2 text-[11px] text-slate-400 backdrop-blur">
+      <div class="mb-1 font-medium text-slate-300">空间图谱 <span class="text-slate-500">· 点击地点查看详情</span></div>
       <div class="flex flex-wrap gap-x-3 gap-y-1">
-        <span><span class="mr-1 inline-block h-2 w-2 rounded-full" style="background:#20c997" />地点</span>
-        <span><span class="mr-1 inline-block h-2 w-2 rounded-full" style="background:#f0b429" />世界</span>
-        <span><span class="mr-1 inline-block h-2 w-2" style="background:#f03e3e" />主角</span>
+        <span><span class="mr-1 inline-block h-2 w-2 rounded-sm" style="background:rgba(32,201,151,.5)" />地点</span>
+        <span><span class="mr-1 inline-block h-2 w-2 rounded-full" style="background:#f0b429" />当前</span>
+        <span><span class="mr-1 inline-block h-2 w-2 rounded-full" style="background:#f03e3e" />主角</span>
+        <span><span class="mr-1 inline-block h-0.5 w-3 align-middle" style="background:#b197fc" />传送</span>
+        <span><span class="mr-1 inline-block h-0.5 w-3 align-middle" style="background:#f0b429" />飞升</span>
       </div>
     </div>
   </div>
 </template>
+
+<style scoped>
+.graph-bg {
+  background-image: radial-gradient(rgba(148, 163, 184, 0.09) 1px, transparent 1px);
+  background-size: 22px 22px;
+  background-position: -11px -11px;
+}
+</style>

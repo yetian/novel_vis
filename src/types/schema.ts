@@ -100,6 +100,12 @@ export interface LogEvent {
   message: string;
 }
 
+export interface SiteSelection {
+  world: string;
+  region?: string | null;
+  site: string;
+}
+
 export interface ProgressEvent {
   book_id: number;
   phase: string;

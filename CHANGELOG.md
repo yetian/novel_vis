@@ -3,6 +3,12 @@
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/) 与 [Conventional Commits](https://www.conventionalcommits.org/zh-hans/)。
 每个有意义的功能实现或修复均递增 PATCH 版本。
 
+## [0.1.10] - fix(llm)
+
+- 修复抽取失败：JSON 修复新增「字符串内裸控制字符转义」（解决 `control character found while parsing a string`），并将 JSON 提取改为平衡括号扫描（容忍数组包裹与尾随文本）。
+- 重要操作确认：新增全局确认框（`ui.askConfirm` + `ConfirmDialog.vue`），删除书籍、取消抽取均需确认。
+- 空间图改为网格卡片式布局并美化（圆角卡片、按出现次数加强边框、点阵背景）；点击地点弹出元数据面板（出现章节、人物、物品/功法、时间标记）。
+
 ## [0.1.9] - feat(ui)
 
 - 修复多本切换抽取：抽取状态改为**按书籍独立的任务**（前端 `jobs` 映射 + 后端按 `book_id` 注册 `JobControl`），进度/日志事件携带 `book_id` 路由；可暂停一本并同时抽取另一本。

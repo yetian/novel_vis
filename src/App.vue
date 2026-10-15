@@ -7,6 +7,7 @@ import LibraryView from "@/components/LibraryView.vue";
 import SpacetimeCanvas from "@/components/SpacetimeCanvas.vue";
 import LlmSettings from "@/components/LlmSettings.vue";
 import MultiBookDialog from "@/components/MultiBookDialog.vue";
+import ConfirmDialog from "@/components/ConfirmDialog.vue";
 import ToastHost from "@/components/ToastHost.vue";
 import { useUiStore, type ViewKey } from "@/stores/ui";
 import { useLibraryStore } from "@/stores/library";
@@ -105,6 +106,7 @@ onBeforeUnmount(() => {
     </div>
 
     <MultiBookDialog />
+    <ConfirmDialog />
     <ToastHost />
   </div>
 </template>

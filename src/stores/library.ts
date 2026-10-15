@@ -104,6 +104,14 @@ export const useLibraryStore = defineStore("library", {
     },
     async remove(bookId: number) {
       const ui = useUiStore();
+      const book = this.books.find((b) => b.id === bookId);
+      const ok = await ui.askConfirm({
+        title: "删除书籍",
+        message: `确认删除《${book?.title ?? bookId}》及其全部抽取数据？\n此操作不可撤销。`,
+        confirmLabel: "删除",
+        danger: true,
+      });
+      if (!ok) return;
       try {
         await api.deleteBook(bookId);
         ui.toast("已删除书籍及其抽取数据", "success");
