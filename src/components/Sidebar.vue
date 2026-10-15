@@ -1,10 +1,14 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { useLibraryStore } from "@/stores/library";
+import { useExtractionStore } from "@/stores/extraction";
 import { useUiStore } from "@/stores/ui";
 
 const library = useLibraryStore();
+const extraction = useExtractionStore();
 const ui = useUiStore();
+
+const isExtracting = (id: number) => extraction.runningBookIds.includes(id);
 
 const formatIcon = (format: string) =>
   format === "EPUB" ? "fa-book" : format === "AZW3" ? "fa-book-bookmark" : "fa-book-open";
@@ -49,6 +53,7 @@ const hasBooks = computed(() => library.books.length > 0);
         <div class="flex items-center gap-2">
           <i class="fa-solid text-jade-400" :class="formatIcon(book.format)" />
           <span class="flex-1 truncate text-sm font-medium text-slate-100">{{ book.title }}</span>
+          <i v-if="isExtracting(book.id)" class="fa-solid fa-circle-notch fa-spin text-gold-400" title="抽取中" />
           <span class="rounded bg-ink-600 px-1.5 py-0.5 text-[10px] text-slate-400">{{ book.format }}</span>
         </div>
         <div class="mt-1 flex items-center justify-between text-[11px] text-slate-500">

@@ -1,6 +1,6 @@
 # 时空编年史 · ChronoSpace Reader
 
-> 当前版本：**v0.1.8**
+> 当前版本：**v0.1.9**
 
 **ChronoSpace Reader（时空编年史）** 是一款跨平台桌面应用，使用 **Tauri 2.0（Rust）+ Vue 3（Vite / Pinia / TypeScript / TailwindCSS）** 构建。
 它把 EPUB / MOBI / AZW3 电子书**在内存中**解析分章，借助**本地大模型**（LM Studio 或 Ollama，OpenAI 兼容 API）抽取**时间、空间、人物、物品/功法与因果**结构，持久化到本地 SQLite，并以**交互式时空图谱**呈现，一键导出可部署到 GitHub Pages 的**零依赖单页 HTML**。
@@ -19,9 +19,10 @@
   - 自动探测模型列表 `/v1/models`（Ollama 回退 `/api/tags`），内置 `qwen2.5-0.5b / 1.5b / 3b`、`gemma-2-2b` 等快速选择芯片。
   - 强制 JSON 输出（`response_format: { type: "json_object" }`），温度默认 `0.1`。
 - **叙事视角归一化**：同时支持第一/第三人称，自动将「我」解析为主角规范名或 `PROTAGONIST_FIRST_PERSON`。
-- **批量抽取运行器**：暂停 / 继续 / 取消、章节进度条、**逐章 SQLite 事务检查点**（可断点续跑）。
+- **批量抽取运行器**：暂停 / 继续 / 取消、章节进度条、**逐章 SQLite 事务检查点**（可断点续跑）。**支持多本并发**：每个任务按书籍独立跟踪，可暂停一本并同时抽取另一本。
 - **动态时空画布**：
-  - 拓扑空间图（Cytoscape.js），按 `world`（人界 / 灵界…）嵌套分组显示 `site` 节点。
+  - 拓扑空间图（Cytoscape.js），确定性布局：每个 `world`（人界 / 灵界…）一行，其下 `site` 环状排布；边的颜色区分移动类型（STAY / TELEPORT / ASCENSION / DUNGEON…）。
+  - **可视化时间线**：章节刻度、时间跳跃（▲）/ 倒叙（▼）标记与天数增量，点击跳转；实体事件高亮。
   - 双轴时间滑块（章节轴 + 虚拟故事时间线），拖动时主角令牌沿节点动画迁移。
   - 物品/功法谱系抽屉：点击「掌天瓶」高亮其首次出现章节，并追溯其后触发的全部章节。
 - **静态 HTML 导出**：内联全部 JSON 数据，生成可直接上传 GitHub Pages 的单页交互式查看器。

@@ -1,6 +1,6 @@
 # ChronoSpace Reader · 架构设计蓝图（design.md）
 
-> 当前版本：**v0.1.8**
+> 当前版本：**v0.1.9**
 > 本文档描述系统架构、数据流、SQLite 关系模式、状态机、协议契约与 UI 组件层级，并与代码库保持同步。
 
 ---
@@ -299,7 +299,7 @@ sequenceDiagram
 
 - `extraction://progress` → `ProgressEvent { book_id, phase, current, total, chapter_index, chapter_title, message, retries }`
   - `phase ∈ { extracting, paused, skipped, chapter_done, finished, cancelled }`
-- `extraction://log` → `string`（人类可读日志行）
+- `extraction://log` → `LogEvent { book_id, message }`（按书籍路由的人类可读日志行）
 
 ### 6.2 错误契约
 
@@ -338,6 +338,8 @@ stateDiagram-v2
 
 `JobControl` 以 `AtomicBool`（`paused` / `cancelled`）实现，注册于 `AppState.jobs`，任务结束后清除。
 
+**多本并发**：`AppState.jobs` 以 `book_id` 为键，因此可同时运行多本抽取；前端亦以 `bookId` 维护独立的 `BookJob`（`jobs` 映射），进度/日志事件按 `book_id` 路由。因此可暂停 A 本并同时开始抽取 B 本，两者互不影响。进度事件 `ProgressEvent.book_id` 与日志事件 `LogEvent.book_id` 用于路由。
+
 ---
 
 ## 8. 前端状态与组件层级
@@ -350,7 +352,8 @@ App.vue
 │   ├── LibraryView.vue      导入区 · 统计 · ExtractionRunner · 藏书卡片(导出/删除)
 │   │   └── ExtractionRunner.vue   开始/暂停/继续/取消 · 进度条 · 日志
 │   ├── SpacetimeCanvas.vue
-│   │   ├── SpaceGraph.vue          Cytoscape 拓扑空间图 + 主角令牌动画
+│   │   ├── SpaceGraph.vue          Cytoscape 空间图（确定性布局：世界分行、地点环布）+ 主角令牌动画
+│   │   ├── StoryTimeline.vue       可视化时间线：章节刻度、时间跳跃/倒叙标记、实体事件高亮
 │   │   ├── TimeScrubber.vue        章节轴 + 虚拟时间线双滑块
 │   │   └── EntityDrawer.vue        人物 / 物品功法 谱系抽屉
 │   └── LlmSettings.vue       引擎选择 · 模型探测 · 参数 · 连接测试
@@ -364,7 +367,7 @@ App.vue
 | `ui` | `activeView`, `toasts` | `setView`, `toast`, `dismiss` |
 | `library` | `books`, `activeBookId`, `timeline` | `refresh`, `ingest`, `open`, `reloadTimeline`, `remove` |
 | `llm` | `config`, `models`, `connected` | `applyEngine`, `load`, `persist`, `fetchModels`, `test` |
-| `extraction` | `running`, `paused`, `progress`, `logs`, `results` | `attach`, `start`, `pause`, `resume`, `cancel` |
+| `extraction` | `jobs: Record<bookId, BookJob>`（每本独立 `running`/`paused`/`progress`/`logs`/`results`） | `attach`, `start(bookId)`, `pause/resume/cancel(bookId)` |
 
 ---
 

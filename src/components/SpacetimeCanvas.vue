@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import SpaceGraph from "@/components/SpaceGraph.vue";
+import StoryTimeline from "@/components/StoryTimeline.vue";
 import TimeScrubber from "@/components/TimeScrubber.vue";
 import EntityDrawer from "@/components/EntityDrawer.vue";
 import { useLibraryStore } from "@/stores/library";
@@ -55,6 +56,14 @@ watch(chapters, () => {
             />
           </div>
           <div class="space-y-2 p-3">
+            <StoryTimeline
+              :chapters="chapters"
+              :entities="entities"
+              :events="events"
+              :active-index="activeIndex"
+              :highlight-entity-id="selectedEntityId"
+              @update:active-index="activeIndex = $event"
+            />
             <TimeScrubber v-model="activeIndex" :chapters="chapters" />
             <div v-if="currentChapter" class="panel px-4 py-3 text-sm">
               <div class="flex items-center gap-2">

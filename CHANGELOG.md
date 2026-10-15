@@ -3,6 +3,12 @@
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/) 与 [Conventional Commits](https://www.conventionalcommits.org/zh-hans/)。
 每个有意义的功能实现或修复均递增 PATCH 版本。
 
+## [0.1.9] - feat(ui)
+
+- 修复多本切换抽取：抽取状态改为**按书籍独立的任务**（前端 `jobs` 映射 + 后端按 `book_id` 注册 `JobControl`），进度/日志事件携带 `book_id` 路由；可暂停一本并同时抽取另一本。
+- 重做空间图：确定性布局（世界分行、地点环状），移动类型着色的边、按出现次数缩放的地点节点、缩放/适应窗口控件。
+- 新增可视化时间线 `StoryTimeline.vue`：章节刻度、时间跳跃/倒叙标记与天数、实体事件高亮、点击跳转。
+
 ## [0.1.8] - docs
 
 - 新增**强制提交规则**（`design.md` §11.1、README）：任何有意义的变更完成后必须立即提交并递增 PATCH，提交后保持工作区干净；仅明确要求时合并提交。

@@ -110,7 +110,7 @@ pub async fn run_extraction(
                 0,
             );
 
-            match extract_chunk(&req.llm, chapter, ci, chunk_total, chunk, &app).await {
+            match extract_chunk(&req.llm, chapter, ci, chunk_total, chunk, &app, req.book_id).await {
                 Ok((ext, used, was_repaired)) => {
                     retries_total += used;
                     repaired |= was_repaired;
@@ -179,6 +179,7 @@ async fn extract_chunk(
     chunk_total: usize,
     text: &str,
     app: &AppHandle,
+    book_id: i64,
 ) -> AppResult<(SegmentExtraction, u32, bool)> {
     let user_prompt = build_user_prompt(chapter, chunk_index, chunk_total, text);
     let mut last_error = String::new();
@@ -188,17 +189,16 @@ async fn extract_chunk(
     for attempt in 0..=llm_config.max_retries {
         if attempt > 0 {
             retries += 1;
-            Emitter::emit(
+            emit_log(
                 app,
-                EVENT_LOG,
+                book_id,
                 &format!(
                     "第 {} 章 JSON 修复重试 {}/{}",
                     chapter.chapter_index + 1,
                     attempt,
                     llm_config.max_retries
                 ),
-            )
-            .ok();
+            );
         }
 
         let prompt = if attempt == 0 || last_output.is_empty() {
@@ -418,7 +418,15 @@ fn emit_progress(
 }
 
 fn emit_log(app: &AppHandle, book_id: i64, message: &str) {
-    Emitter::emit(app, EVENT_LOG, &format!("[book {}] {}", book_id, message)).ok();
+    Emitter::emit(
+        app,
+        EVENT_LOG,
+        &LogEvent {
+            book_id,
+            message: message.to_string(),
+        },
+    )
+    .ok();
 }
 
 /// 系统提示词：约束模型输出严格的时空/人物/因果 JSON。

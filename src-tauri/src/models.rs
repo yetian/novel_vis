@@ -272,6 +272,13 @@ pub struct ModelInfo {
     pub owned_by: Option<String>,
 }
 
+/// 抽取日志事件（按书籍区分，支持多本并发抽取）
+#[derive(Debug, Clone, Serialize)]
+pub struct LogEvent {
+    pub book_id: i64,
+    pub message: String,
+}
+
 /// 抽取任务进度事件
 #[derive(Debug, Clone, Serialize)]
 pub struct ProgressEvent {

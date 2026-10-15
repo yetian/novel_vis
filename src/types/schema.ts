@@ -95,6 +95,11 @@ export interface TimelineBundle {
   events: EntityEventRow[];
 }
 
+export interface LogEvent {
+  book_id: number;
+  message: string;
+}
+
 export interface ProgressEvent {
   book_id: number;
   phase: string;
