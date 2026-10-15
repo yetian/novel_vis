@@ -3,6 +3,13 @@
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/) 与 [Conventional Commits](https://www.conventionalcommits.org/zh-hans/)。
 每个有意义的功能实现或修复均递增 PATCH 版本。
 
+## [0.1.15] - feat(ui)
+
+- 新增「人物关系」标签页 `RelationGraph.vue`：人物为节点（按出场次数缩放）、同章共现为连线（线宽=共现次数），点击高亮关系网与出场章节。
+- 新增「空间物品」标签页 `EntityCards.vue`：地点卡片（世界/区域、章节数、在场人物、获得物品）与物品/功法卡片（类别、首现、获得地点、次数），支持搜索。
+- 修复时空图箭头/连线需点击后才显示：初始化即构建元素，并在容器尺寸确定后（`requestAnimationFrame` + `ResizeObserver`）自动适配；STAY 边提高可见度（虚线）。
+- 强化 JSON 输出约束：提示词开篇强制「只输出一个 JSON 对象」，附输出前自检清单与结尾重申；默认分块 3000 → 2000。
+
 ## [0.1.14] - fix(core)
 
 - 源文件可重定位：`books` 新增 `source_path` / `content_sig`（SHA-256）；抽取开始时若原文不在内存，`ensure_book_loaded` 会按记录路径重新读取并校验签名（旧库自动增量迁移补列）。

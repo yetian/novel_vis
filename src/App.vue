@@ -5,6 +5,8 @@ import type { UnlistenFn } from "@tauri-apps/api/event";
 import Sidebar from "@/components/Sidebar.vue";
 import LibraryView from "@/components/LibraryView.vue";
 import SpacetimeCanvas from "@/components/SpacetimeCanvas.vue";
+import RelationGraph from "@/components/RelationGraph.vue";
+import EntityCards from "@/components/EntityCards.vue";
 import LlmSettings from "@/components/LlmSettings.vue";
 import MultiBookDialog from "@/components/MultiBookDialog.vue";
 import ConfirmDialog from "@/components/ConfirmDialog.vue";
@@ -25,6 +27,8 @@ const version = __APP_VERSION__;
 const navItems: { key: ViewKey; label: string; icon: string }[] = [
   { key: "library", label: "图书馆", icon: "fa-book-open-reader" },
   { key: "canvas", label: "时空画布", icon: "fa-diagram-project" },
+  { key: "relations", label: "人物关系", icon: "fa-users" },
+  { key: "cards", label: "空间物品", icon: "fa-table-cells-large" },
   { key: "settings", label: "引擎设置", icon: "fa-sliders" },
 ];
 
@@ -101,6 +105,8 @@ onBeforeUnmount(() => {
       <main class="min-w-0 flex-1 overflow-hidden">
         <LibraryView v-if="ui.activeView === 'library'" />
         <SpacetimeCanvas v-else-if="ui.activeView === 'canvas'" />
+        <RelationGraph v-else-if="ui.activeView === 'relations'" />
+        <EntityCards v-else-if="ui.activeView === 'cards'" />
         <LlmSettings v-else />
       </main>
     </div>

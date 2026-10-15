@@ -1,6 +1,6 @@
 # ChronoSpace Reader · 架构设计蓝图（design.md）
 
-> 当前版本：**v0.1.14**
+> 当前版本：**v0.1.15**
 > 本文档描述系统架构、数据流、SQLite 关系模式、状态机、协议契约与 UI 组件层级，并与代码库保持同步。
 
 ---
@@ -361,11 +361,13 @@ App.vue
 │   ├── LibraryView.vue      导入区 · 统计 · ExtractionRunner · 藏书卡片(导出/删除)
 │   │   └── ExtractionRunner.vue   开始/暂停/继续/取消 · 进度条 · 日志
 │   ├── SpacetimeCanvas.vue
-│   │   ├── SpaceGraph.vue          Cytoscape 空间图（确定性布局：世界分行、地点环布）+ 主角令牌动画
+│   │   ├── SpaceGraph.vue          Cytoscape 空间图（确定性布局：世界分行、地点卡片网格）+ 主角令牌动画
 │   │   ├── StoryTimeline.vue       可视化时间线：章节刻度、时间跳跃/倒叙标记、实体事件高亮
 │   │   ├── TimeScrubber.vue        章节轴 + 虚拟时间线双滑块
 │   │   └── EntityDrawer.vue        人物 / 物品功法 谱系抽屉
-│   └── LlmSettings.vue       引擎选择 · 模型探测 · 参数 · 连接测试
+│   ├── RelationGraph.vue     人物关系图（同章共现，节点按出场次数、连线按共现次数）
+│   ├── EntityCards.vue       空间地点卡片 + 物品/功法卡片（独立标签页，可搜索）
+│   └── LlmSettings.vue       引擎选择 · 模型探测 · 参数 · 连接测试 · 数据管理
 ├── ConfirmDialog.vue         全局确认框（ui.askConfirm）
 └── ToastHost.vue             全局通知
 ```

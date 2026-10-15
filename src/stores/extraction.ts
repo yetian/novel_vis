@@ -26,7 +26,7 @@ export const useExtractionStore = defineStore("extraction", {
   state: () => ({
     jobs: {} as Record<number, BookJob>,
     skipExtracted: true,
-    chunkChars: 3000,
+    chunkChars: 2000,
     unlisten: [] as UnlistenFn[],
   }),
   getters: {

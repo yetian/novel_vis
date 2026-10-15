@@ -183,14 +183,14 @@ const style = [
       "line-color": "data(color)",
       "target-arrow-color": "data(color)",
       "target-arrow-shape": "triangle",
-      "arrow-scale": 0.9,
-      width: 1.8,
-      opacity: 0.65,
+      "arrow-scale": 1,
+      width: 2,
+      opacity: 0.8,
     },
   },
   {
     selector: 'edge[movement="STAY"]',
-    style: { opacity: 0.22, width: 1.2 },
+    style: { opacity: 0.45, width: 1.5, "line-style": "dashed" },
   },
   {
     selector: "node.active",
@@ -232,14 +232,30 @@ const style = [
   },
 ] as unknown as cytoscape.StylesheetJson;
 
+let ro: ResizeObserver | null = null;
+let fittedOnce = false;
+
+function fitNow() {
+  if (!cy || cy.width() === 0 || cy.height() === 0) return;
+  try {
+    cy.resize();
+    cy.fit(undefined, 72);
+    fittedOnce = true;
+  } catch {
+    /* ignore */
+  }
+}
+
 function reconstruct() {
   if (!cy) return;
   try {
     cy.elements().remove();
     cy.add(buildElements());
-    cy.layout({ name: "preset", fit: true, padding: 72 }).run();
+    cy.layout({ name: "preset", fit: false }).run();
     updateActive(false);
     updateTrail();
+    // 容器尺寸可能在挂载后/数据到达后才确定，下一帧再适配。
+    requestAnimationFrame(fitNow);
   } catch (e) {
     console.error("图谱渲染失败", e);
   }
@@ -249,7 +265,7 @@ function initGraph() {
   if (!container.value) return;
   cy = cytoscape({
     container: container.value,
-    elements: [],
+    elements: buildElements(),
     style,
     layout: { name: "preset" },
     wheelSensitivity: 0.2,
@@ -326,14 +342,24 @@ function fit() {
 
 function resize() {
   cy?.resize();
+  if (!fittedOnce) fitNow();
 }
 
 onMounted(() => {
   initGraph();
   window.addEventListener("resize", resize);
+  if (typeof ResizeObserver !== "undefined" && container.value) {
+    ro = new ResizeObserver(() => {
+      cy?.resize();
+      if (!fittedOnce) fitNow();
+    });
+    ro.observe(container.value);
+  }
 });
 onBeforeUnmount(() => {
   window.removeEventListener("resize", resize);
+  ro?.disconnect();
+  ro = null;
   cy?.destroy();
   cy = null;
 });

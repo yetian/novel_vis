@@ -1,6 +1,6 @@
 import { defineStore } from "pinia";
 
-export type ViewKey = "library" | "canvas" | "settings";
+export type ViewKey = "library" | "canvas" | "relations" | "cards" | "settings";
 export type ToastKind = "info" | "success" | "error";
 
 export interface Toast {

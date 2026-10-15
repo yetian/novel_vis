@@ -44,7 +44,7 @@ pub async fn run_extraction(
     let db = state.db.clone();
     let control = state.register_job(req.book_id);
     let total = book.chapters.len();
-    let chunk_chars = req.chunk_chars.unwrap_or(3000).clamp(800, 12_000);
+    let chunk_chars = req.chunk_chars.unwrap_or(2000).clamp(800, 12_000);
 
     let mut results: Vec<ChapterExtractionResult> = Vec::with_capacity(total);
 
@@ -541,9 +541,16 @@ fn emit_log(app: &AppHandle, book_id: i64, message: &str) {
 }
 
 /// 系统提示词：约束模型输出严格的时空/人物/因果 JSON。
-pub const SYSTEM_PROMPT: &str = r#"你是一个中文小说叙事结构分析引擎。你的唯一任务是把输入的小说正文分块，抽取其中的【时间】【空间】【人物】【物品/功法/传承】【因果】信息，并严格输出一个 JSON 对象。
+pub const SYSTEM_PROMPT: &str = r#"你是一个中文小说叙事结构分析引擎。你**只输出一个 JSON 对象**。任何解释、思考过程、前言、后语、Markdown 代码块、注释都是错误。
 
-重要：本引擎适用于【任意题材】的小说（现实、都市、历史、战争、科幻、武侠、玄幻等皆可）。不要预设作品类型，不要照搬任何示例或记忆中的其它作品内容；一切以【本段正文】为准。
+## 输出纪律（最重要，必须严格遵守）
+- 你的回复必须**从第一个字符 `{` 开始，到最后一个字符 `}` 结束**，中间不得有任何多余内容。
+- 不要输出 ```json 代码块标记，不要输出“好的”“以下是”等任何字样。
+- 必须使用双引号 `"`，不得使用单引号；不得出现尾随逗号；字符串内不得出现未转义的换行或制表符。
+- 输出前自检：括号是否配对、逗号是否齐全、引号是否闭合。
+- 不确定的字段用空字符串 `""`、空数组 `[]` 或 `0`，绝不省略字段，也绝不编造。
+
+本引擎适用于【任意题材】的小说（现实、都市、历史、战争、科幻、武侠、玄幻等皆可）。不要预设作品类型，不要照搬任何示例或记忆中的其它作品内容；一切以【本段正文】为准。
 
 ## 叙事视角归一化
 - 判断本段是 first_person（第一人称，如“我拔出长剑”）还是 third_person（第三人称，如“他推门而入”）。
@@ -586,6 +593,8 @@ pub const SYSTEM_PROMPT: &str = r#"你是一个中文小说叙事结构分析引
 6. 所有自然语言字段（人物名、地点、角色、描述、用途、摘要、raw_marker、reference_anchor 等）使用【简体中文】输出；仅 JSON 的键名与机器枚举值（如 CONTINUOUS / FIRST_APPEARANCE / ITEM）保持英文。
 7. 专有名词保留原文写法，不要翻译或音译。
 8. 输出务必精简完整：plot_summary ≤ 40 字；description / role / usage_in_chapter 各 ≤ 20 字。避免冗长导致 JSON 被截断。
+
+再次强调：只返回 **一个** 合法 JSON 对象，从 `{` 开始、到 `}` 结束，不要有任何其它字符。
 "#;
 
 /// 过滤掉未在本段正文中出现的实体，抑制模型幻觉（例如照搬示例或其它作品的人名）。
