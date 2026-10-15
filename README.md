@@ -1,6 +1,6 @@
 # 时空编年史 · ChronoSpace Reader
 
-> 当前版本：**v0.1.0**
+> 当前版本：**v0.1.1**
 
 **ChronoSpace Reader（时空编年史）** 是一款跨平台桌面应用，使用 **Tauri 2.0（Rust）+ Vue 3（Vite / Pinia / TypeScript / TailwindCSS）** 构建。
 它把 EPUB / MOBI / AZW3 电子书**在内存中**解析分章，借助**本地大模型**（LM Studio 或 Ollama，OpenAI 兼容 API）抽取**时间、空间、人物、物品/功法与因果**结构，持久化到本地 SQLite，并以**交互式时空图谱**呈现，一键导出可部署到 GitHub Pages 的**零依赖单页 HTML**。
@@ -205,6 +205,12 @@ git add -A && git commit -m "feat(core): ... v0.1.1"
 - **DRM / HUFF-CDIC**：加密电子书与 HUFF/CDIC 压缩的 MOBI 暂不支持（会给出明确错误）。
 - **原文缓存会话级**：为避免磁盘膨胀，原文仅驻留内存；应用重启后需重新导入再抽取（已抽取的结构化数据持久保存）。
 - **长章节分块**：超长章节按约 2k token 分块，逐块抽取后各自落库为独立时空节点。
+
+---
+
+## 📝 变更日志
+
+各版本变更记录见 [`CHANGELOG.md`](./CHANGELOG.md)。
 
 ---
 

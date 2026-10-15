@@ -18,6 +18,8 @@ const library = useLibraryStore();
 const llm = useLlmStore();
 const extraction = useExtractionStore();
 
+const version = __APP_VERSION__;
+
 const navItems: { key: ViewKey; label: string; icon: string }[] = [
   { key: "library", label: "图书馆", icon: "fa-book-open-reader" },
   { key: "canvas", label: "时空画布", icon: "fa-diagram-project" },
@@ -77,6 +79,9 @@ onBeforeUnmount(() => {
       </nav>
 
       <div class="ml-auto flex items-center gap-3">
+        <span class="hidden rounded-md border border-ink-600/60 px-2 py-1 text-[11px] text-slate-500 sm:inline">
+          v{{ version }}
+        </span>
         <div class="hidden items-center gap-2 rounded-lg border border-ink-600/60 px-3 py-1.5 text-xs md:flex">
           <span class="h-2 w-2 rounded-full" :class="llm.connected ? 'bg-jade-500' : 'bg-slate-500'" />
           <span class="text-slate-400">{{ llm.engineLabel }}</span>
