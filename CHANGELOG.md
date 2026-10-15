@@ -3,6 +3,10 @@
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/) 与 [Conventional Commits](https://www.conventionalcommits.org/zh-hans/)。
 每个有意义的功能实现或修复均递增 PATCH 版本。
 
+## [0.1.2] - fix(tooling)
+
+- `bump-version.mjs` 现同步更新 `src-tauri/Cargo.lock` 中本包版本，避免 cargo 二次改写产生游离改动。
+
 ## [0.1.1] - feat(ui)
 
 - 应用头部显示当前版本号（由 `vite.config.ts` 从 `package.json` 注入 `__APP_VERSION__`）。

@@ -33,8 +33,8 @@ if (tauriVersion !== version) {
 
 for (const doc of ["README.md", "design.md"]) {
   const content = read(doc);
-  if (!content.includes(`v${version}`)) {
-    errors.push(`${doc} 未包含当前版本标记 v${version}`);
+  if (!content.includes(`当前版本：**v${version}**`)) {
+    errors.push(`${doc} 未包含当前版本标记 当前版本：**v${version}**`);
   }
 }
 
