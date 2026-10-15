@@ -1,7 +1,7 @@
 import { defineStore } from "pinia";
 import { api } from "@/api/tauri";
 import { errText } from "@/utils/error";
-import type { EngineKind, LlmConfig, ModelInfo } from "@/types/schema";
+import type { EngineKind, GpuStatus, LlmConfig, ModelInfo } from "@/types/schema";
 import { ENGINE_PRESETS } from "@/types/schema";
 import { useUiStore } from "./ui";
 
@@ -23,6 +23,7 @@ export const useLlmStore = defineStore("llm", {
     config: defaultConfig(),
     models: [] as ModelInfo[],
     loadedModels: [] as string[],
+    gpu: null as GpuStatus | null,
     loading: false,
     activatedModel: "" as string,
     connected: false,
@@ -82,6 +83,13 @@ export const useLlmStore = defineStore("llm", {
         ui.toast(`无法获取模型列表：${errText(e)}`, "error");
       } finally {
         this.loading = false;
+      }
+    },
+    async fetchGpu() {
+      try {
+        this.gpu = await api.gpuStatus(this.config);
+      } catch {
+        this.gpu = null;
       }
     },
     async refreshLoaded() {

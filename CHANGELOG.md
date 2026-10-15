@@ -3,6 +3,12 @@
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/) 与 [Conventional Commits](https://www.conventionalcommits.org/zh-hans/)。
 每个有意义的功能实现或修复均递增 PATCH 版本。
 
+## [0.1.18] - feat(extract)
+
+- 并行抽取：`ExtractionRequest.concurrency`（1–4）；`run_extraction` 以 `JoinSet` 分批并发处理章节，DB 写入串行化。
+- 新增 `gpu_status`：通过 nvidia-smi 读取显存、Ollama `/api/ps` 读取模型显存；当模型占用低于单卡 80% 时给出建议并发数。
+- 抽取面板新增「并发」选择与建议提示；引擎设置新增显存信息与并行配置说明（Ollama `OLLAMA_NUM_PARALLEL`、LM Studio 并发设置）。
+
 ## [0.1.17] - fix(extract)
 
 - 重新抽取（取消勾选「跳过已完成」）前先清除该书旧抽取数据（`clear_book_extraction`：节点/实体/事件/章节摘要），避免重复或错乱；书籍与章节记录保留。

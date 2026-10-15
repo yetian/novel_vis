@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, onMounted } from "vue";
 import { useLibraryStore } from "@/stores/library";
 import { useExtractionStore, type BookJob } from "@/stores/extraction";
 import { useLlmStore } from "@/stores/llm";
@@ -48,6 +48,12 @@ async function start() {
   extraction.start(bookId.value);
 }
 
+onMounted(() => {
+  llm.fetchGpu().catch(() => undefined);
+});
+
+const gpuSuggestion = computed(() => llm.gpu?.suggested_concurrency ?? 1);
+
 async function cancel() {
   if (!bookId.value) return;
   const ok = await ui.askConfirm({
@@ -88,6 +94,20 @@ async function cancel() {
             class="w-20 rounded border border-ink-500 bg-ink-900 px-2 py-1 text-slate-200"
           />
         </label>
+        <label class="flex items-center gap-1.5 text-xs text-slate-400" title="并发请求数（1-4）。需引擎支持并行/批处理才会提速">
+          并发
+          <select v-model.number="extraction.concurrency" class="rounded border border-ink-500 bg-ink-900 px-2 py-1 text-slate-200">
+            <option v-for="n in 4" :key="n" :value="n">{{ n }}</option>
+          </select>
+        </label>
+        <span
+          v-if="gpuSuggestion > 1"
+          class="cursor-help text-[11px] text-gold-400"
+          title="依据模型显存占用估计，可允许更多并发"
+          @click="extraction.concurrency = gpuSuggestion"
+        >
+          <i class="fa-solid fa-microchip mr-1" />建议 {{ gpuSuggestion }} 路
+        </span>
 
         <button v-if="!running" class="btn-primary" @click="start">
           <i class="fa-solid fa-play" />开始抽取

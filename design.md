@@ -1,6 +1,6 @@
 # ChronoSpace Reader · 架构设计蓝图（design.md）
 
-> 当前版本：**v0.1.17**
+> 当前版本：**v0.1.18**
 > 本文档描述系统架构、数据流、SQLite 关系模式、状态机、协议契约与 UI 组件层级，并与代码库保持同步。
 
 ---
@@ -193,6 +193,7 @@ erDiagram
 - 迁移策略：全部语句使用 `CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS`，可幂等重复执行。
 - 存储位置：由 `paths.rs` 解析为用户配置目录下的 `local/<APPNAME>`（Linux `~/.config/local/chronospace-reader/`，macOS `~/Library/Application Support/local/chronospace-reader/`，Windows `%APPDATA%\local\chronospace-reader\`），可用 `CHRONOSPACE_DATA_DIR` 覆盖。数据库文件 `chronospace.sqlite3`；同样的目录保存 `llm_config.json`。原文不落盘，仅驻内存。
 - 一个章节可对应**多个** `spatiotemporal_nodes`（分块抽取），画布查询取每章最早节点作为代表。
+- **并发**：`ExtractionRequest.concurrency`（1–4）控制 `run_extraction` 的批处理：以 `tokio::task::JoinSet` 每批并发处理章节，DB 写入由 `Mutex<Connection>` 串行化。引擎需支持并行/批处理才能真正加速。
 - **重抽覆盖**：`skip_extracted=false` 时 `run_extraction` 先调用 `clear_book_extraction`（删除该书 `spatiotemporal_nodes` / `entity_events` / `entities` 并清空章节摘要），再重新处理，避免重复数据；前端在开始前弹出确认。
 
 ---
@@ -299,6 +300,7 @@ sequenceDiagram
 | `list_loaded_models` | `config: LlmConfig` | `ModelInfo[]` | 引擎中已加载模型（Ollama `/api/ps`、LM Studio `/api/v0/models`） |
 | `activate_model` | `config: LlmConfig` | `string` | 卸载旧模型并预热加载当前模型（尽力而为），返回状态说明 |
 | `test_connection` | `config: LlmConfig` | `boolean` | 连通性探测 |
+| `gpu_status` | `config: LlmConfig` | `GpuStatus` | 显存占用与建议并发数（`nvidia-smi` + Ollama `/api/ps`，尽力而为） |
 | `start_extraction` | `request: ExtractionRequest` | `ChapterExtractionResult[]` | 批量抽取 |
 | `pause_extraction` / `resume_extraction` / `cancel_extraction` | `bookId: number` | `void` | 任务控制 |
 | `read_text_file` | `path: string` | `string` | 辅助读取 |

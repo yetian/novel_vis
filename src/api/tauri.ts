@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   BookInspection,
   BookRow,
+  GpuStatus,
   ChapterExtractionResult,
   ExtractionRequest,
   IngestResult,
@@ -37,6 +38,7 @@ export const api = {
   listModels: (config: LlmConfig) => guard(() => invoke<ModelInfo[]>("list_models", { config })),
   listLoadedModels: (config: LlmConfig) => guard(() => invoke<ModelInfo[]>("list_loaded_models", { config })),
   activateModel: (config: LlmConfig) => guard(() => invoke<string>("activate_model", { config })),
+  gpuStatus: (config: LlmConfig) => guard(() => invoke<GpuStatus>("gpu_status", { config })),
   testConnection: (config: LlmConfig) => guard(() => invoke<boolean>("test_connection", { config })),
   startExtraction: (request: ExtractionRequest) =>
     guard(() => invoke<ChapterExtractionResult[]>("start_extraction", { request })),

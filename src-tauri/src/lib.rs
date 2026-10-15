@@ -41,6 +41,7 @@ pub fn run() {
             commands::list_loaded_models,
             commands::activate_model,
             commands::test_connection,
+            commands::gpu_status,
             commands::start_extraction,
             commands::pause_extraction,
             commands::resume_extraction,

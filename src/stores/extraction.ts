@@ -27,6 +27,7 @@ export const useExtractionStore = defineStore("extraction", {
     jobs: {} as Record<number, BookJob>,
     skipExtracted: true,
     chunkChars: 2000,
+    concurrency: 1,
     unlisten: [] as UnlistenFn[],
   }),
   getters: {
@@ -93,6 +94,7 @@ export const useExtractionStore = defineStore("extraction", {
         llm: llm.config,
         chunk_chars: this.chunkChars,
         skip_extracted: this.skipExtracted,
+        concurrency: this.concurrency,
       };
 
       try {

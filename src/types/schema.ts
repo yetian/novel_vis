@@ -184,6 +184,19 @@ export interface ExtractionRequest {
   llm: LlmConfig;
   chunk_chars?: number | null;
   skip_extracted?: boolean;
+  concurrency?: number | null;
+}
+
+export interface GpuInfo {
+  name: string;
+  total_bytes: number;
+  used_bytes: number;
+}
+
+export interface GpuStatus {
+  gpus: GpuInfo[];
+  model_vram_bytes?: number | null;
+  suggested_concurrency: number;
 }
 
 export const ENGINE_PRESETS: Record<EngineKind, { label: string; baseUrl: string }> = {

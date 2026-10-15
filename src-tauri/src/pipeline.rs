@@ -21,6 +21,9 @@ pub struct ExtractionRequest {
     pub chunk_chars: Option<usize>,
     #[serde(default)]
     pub skip_extracted: bool,
+    /// 并发请求数（1–4）。需引擎支持并行/批处理才能获得加速。
+    #[serde(default)]
+    pub concurrency: Option<u32>,
 }
 
 static TRAILING_COMMA_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r",(\s*[}\]])").unwrap());
@@ -31,7 +34,7 @@ static MISSING_COMMA_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r#"([}\]"]|true|false|null|[0-9])(\s*)("[A-Za-z_\u4e00-\u9fff])"#).unwrap()
 });
 
-/// 抽取管线主入口：逐章 -> 逐块调用本地大模型，产出结构化实体并持久化。
+/// 抽取管线主入口：按并发度成批处理章节，逐块调用本地大模型并持久化。
 pub async fn run_extraction(
     app: AppHandle,
     state: &AppState,
@@ -45,126 +48,107 @@ pub async fn run_extraction(
     let control = state.register_job(req.book_id);
     let total = book.chapters.len();
     let chunk_chars = req.chunk_chars.unwrap_or(2000).clamp(800, 12_000);
+    let concurrency = req.concurrency.unwrap_or(1).clamp(1, 4) as usize;
 
     // 未勾选「跳过已完成」= 重新处理整本书，先清除旧的抽取结果以避免重复。
     if !req.skip_extracted {
         db.clear_book_extraction(req.book_id)?;
     }
+    if concurrency > 1 {
+        emit_log(
+            &app,
+            req.book_id,
+            &format!("启用 {concurrency} 路并发抽取（需引擎支持并行/批处理才会真正提速）"),
+        );
+    }
 
+    let chapters: Vec<ParsedChapter> = book.chapters.clone();
     let mut results: Vec<ChapterExtractionResult> = Vec::with_capacity(total);
+    let mut pos = 0usize;
 
-    for (pos, chapter) in book.chapters.iter().enumerate() {
+    while pos < chapters.len() {
         if control.is_cancelled() {
             emit_log(&app, req.book_id, "任务已取消");
             break;
         }
         await_resume(&app, &control, req.book_id).await;
 
-        let chapter_id = db.insert_chapter(
-            req.book_id,
-            chapter.chapter_index,
-            &chapter.title,
-            &chapter.content_hash,
-            None,
-        )?;
+        let mut set: tokio::task::JoinSet<ChapterExtractionResult> = tokio::task::JoinSet::new();
+        let mut spawned = 0usize;
 
-        if req.skip_extracted && db.chapter_extracted(chapter_id)? {
-            emit_progress(
-                &app,
-                &req.book_id,
-                "skipped",
-                pos + 1,
-                total,
+        for chapter in chapters.iter().skip(pos).take(concurrency).cloned() {
+            let cp = pos + spawned;
+            let chapter_id = db.insert_chapter(
+                req.book_id,
                 chapter.chapter_index,
                 &chapter.title,
-                "已存在抽取结果，跳过",
-                0,
-            );
-            results.push(ChapterExtractionResult {
-                chapter_index: chapter.chapter_index,
-                chapter_title: chapter.title.clone(),
-                ok: true,
-                retries_used: 0,
-                repaired: false,
-                extraction: None,
-                error: None,
+                &chapter.content_hash,
+                None,
+            )?;
+
+            if req.skip_extracted && db.chapter_extracted(chapter_id)? {
+                emit_progress(
+                    &app,
+                    &req.book_id,
+                    "skipped",
+                    cp + 1,
+                    total,
+                    chapter.chapter_index,
+                    &chapter.title,
+                    "已存在抽取结果，跳过",
+                    0,
+                );
+                results.push(ChapterExtractionResult {
+                    chapter_index: chapter.chapter_index,
+                    chapter_title: chapter.title.clone(),
+                    ok: true,
+                    retries_used: 0,
+                    repaired: false,
+                    extraction: None,
+                    error: None,
+                });
+                spawned += 1;
+                continue;
+            }
+
+            let task_app = app.clone();
+            let task_db = db.clone();
+            let task_llm = req.llm.clone();
+            let task_control = control.clone();
+            let book_id = req.book_id;
+            set.spawn(async move {
+                extract_chapter(
+                    task_app,
+                    task_db,
+                    task_llm,
+                    book_id,
+                    chapter,
+                    chapter_id,
+                    chunk_chars,
+                    task_control,
+                    cp,
+                    total,
+                )
+                .await
             });
-            continue;
+            spawned += 1;
         }
 
-        let chunks = split_chunks(&chapter.text, chunk_chars);
-        let chunk_total = chunks.len().max(1);
+        if spawned == 0 {
+            break;
+        }
 
-        let mut chapter_ok = true;
-        let mut retries_total = 0u32;
-        let mut repaired = false;
-        let mut first_ext: Option<SegmentExtraction> = None;
-        let mut first_error: Option<String> = None;
-
-        for (ci, chunk) in chunks.iter().enumerate() {
-            if control.is_cancelled() {
-                break;
-            }
-            await_resume(&app, &control, req.book_id).await;
-
-            emit_progress(
-                &app,
-                &req.book_id,
-                "extracting",
-                pos,
-                total,
-                chapter.chapter_index,
-                &chapter.title,
-                &format!("正在抽取第 {} 章 · 分块 {}/{}", chapter.chapter_index + 1, ci + 1, chunk_total),
-                0,
-            );
-
-            match extract_chunk(&req.llm, chapter, ci, chunk_total, chunk, &app, req.book_id).await {
-                Ok((ext, used, was_repaired)) => {
-                    retries_total += used;
-                    repaired |= was_repaired;
-                    if first_ext.is_none() {
-                        first_ext = Some(ext.clone());
-                    }
-                    if let Err(e) = db.persist_extraction(req.book_id, chapter_id, &ext) {
-                        chapter_ok = false;
-                        first_error = Some(e.to_string());
-                    }
-                }
-                Err(e) => {
-                    chapter_ok = false;
-                    first_error = Some(e.to_string());
-                    emit_log(
-                        &app,
-                        req.book_id,
-                        &format!("第 {} 章分块 {} 抽取失败: {}", chapter.chapter_index + 1, ci + 1, e),
-                    );
-                }
+        while let Some(joined) = set.join_next().await {
+            match joined {
+                Ok(r) => results.push(r),
+                Err(e) => emit_log(&app, req.book_id, &format!("并发任务失败: {e}")),
             }
         }
 
-        emit_progress(
-            &app,
-            &req.book_id,
-            "chapter_done",
-            pos + 1,
-            total,
-            chapter.chapter_index,
-            &chapter.title,
-            if chapter_ok { "章节完成" } else { "章节存在失败分块" },
-            retries_total,
-        );
-
-        results.push(ChapterExtractionResult {
-            chapter_index: chapter.chapter_index,
-            chapter_title: chapter.title.clone(),
-            ok: chapter_ok,
-            retries_used: retries_total,
-            repaired,
-            extraction: first_ext,
-            error: first_error,
-        });
+        pos += spawned;
     }
+
+    results.sort_by_key(|r| r.chapter_index);
 
     emit_progress(
         &app,
@@ -179,6 +163,98 @@ pub async fn run_extraction(
     );
     state.clear_job(req.book_id);
     Ok(results)
+}
+
+/// 抽取单个章节（含其所有分块）。作为并发任务单元运行。
+#[allow(clippy::too_many_arguments)]
+async fn extract_chapter(
+    app: AppHandle,
+    db: Arc<crate::db::Db>,
+    llm_config: LlmConfig,
+    book_id: i64,
+    chapter: ParsedChapter,
+    chapter_id: i64,
+    chunk_chars: usize,
+    control: Arc<JobControl>,
+    pos: usize,
+    total: usize,
+) -> ChapterExtractionResult {
+    let chunks = split_chunks(&chapter.text, chunk_chars);
+    let chunk_total = chunks.len().max(1);
+
+    let mut chapter_ok = true;
+    let mut retries_total = 0u32;
+    let mut repaired = false;
+    let mut first_ext: Option<SegmentExtraction> = None;
+    let mut first_error: Option<String> = None;
+
+    for (ci, chunk) in chunks.iter().enumerate() {
+        if control.is_cancelled() {
+            if first_ext.is_none() && first_error.is_none() {
+                first_error = Some("已取消".into());
+                chapter_ok = false;
+            }
+            break;
+        }
+        await_resume(&app, &control, book_id).await;
+
+        emit_progress(
+            &app,
+            &book_id,
+            "extracting",
+            pos,
+            total,
+            chapter.chapter_index,
+            &chapter.title,
+            &format!("正在抽取第 {} 章 · 分块 {}/{}", chapter.chapter_index + 1, ci + 1, chunk_total),
+            0,
+        );
+
+        match extract_chunk(&llm_config, &chapter, ci, chunk_total, chunk, &app, book_id).await {
+            Ok((ext, used, was_repaired)) => {
+                retries_total += used;
+                repaired |= was_repaired;
+                if first_ext.is_none() {
+                    first_ext = Some(ext.clone());
+                }
+                if let Err(e) = db.persist_extraction(book_id, chapter_id, &ext) {
+                    chapter_ok = false;
+                    first_error = Some(e.to_string());
+                }
+            }
+            Err(e) => {
+                chapter_ok = false;
+                first_error = Some(e.to_string());
+                emit_log(
+                    &app,
+                    book_id,
+                    &format!("第 {} 章分块 {} 抽取失败: {}", chapter.chapter_index + 1, ci + 1, e),
+                );
+            }
+        }
+    }
+
+    emit_progress(
+        &app,
+        &book_id,
+        "chapter_done",
+        pos + 1,
+        total,
+        chapter.chapter_index,
+        &chapter.title,
+        if chapter_ok { "章节完成" } else { "章节存在失败分块" },
+        retries_total,
+    );
+
+    ChapterExtractionResult {
+        chapter_index: chapter.chapter_index,
+        chapter_title: chapter.title.clone(),
+        ok: chapter_ok,
+        retries_used: retries_total,
+        repaired,
+        extraction: first_ext,
+        error: first_error,
+    }
 }
 
 async fn extract_chunk(

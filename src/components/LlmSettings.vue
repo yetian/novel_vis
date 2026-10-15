@@ -40,8 +40,11 @@ const engines: { key: EngineKind; icon: string; hint: string }[] = [
 onMounted(() => {
   if (!llm.models.length) llm.fetchModels().catch(() => undefined);
   llm.refreshLoaded().catch(() => undefined);
+  llm.fetchGpu().catch(() => undefined);
   if (isTauri) api.getDataDir().then((dir) => (dataDir.value = dir)).catch(() => undefined);
 });
+
+const mb = (bytes: number) => (bytes / 1024 / 1024).toFixed(0) + " MiB";
 </script>
 
 <template>
@@ -210,10 +213,26 @@ onMounted(() => {
 
       <section class="panel p-5 text-xs leading-relaxed text-slate-400">
         <h4 class="mb-2 text-sm font-semibold text-slate-200"><i class="fa-solid fa-microchip mr-1 text-gold-400" />多 GPU / 显卡选择</h4>
-        <p>模型的加载与显卡分配由**推理引擎**决定，应用无法直接指定 GPU。请按引擎方式配置：</p>
+
+        <div v-if="llm.gpu && llm.gpu.gpus.length" class="mb-3 space-y-1 rounded-lg bg-ink-900/60 p-3">
+          <div v-for="g in llm.gpu.gpus" :key="g.name" class="flex items-center justify-between">
+            <span class="text-slate-300"><i class="fa-solid fa-gpu mr-1 text-jade-500" />{{ g.name }}</span>
+            <span class="text-slate-400">{{ mb(g.used_bytes) }} / {{ mb(g.total_bytes) }}</span>
+          </div>
+          <div v-if="llm.gpu.model_vram_bytes" class="pt-1 text-slate-400">
+            当前模型显存占用：<span class="text-jade-400">{{ mb(llm.gpu.model_vram_bytes) }}</span>
+            · 建议并发：<span class="text-gold-400">{{ llm.gpu.suggested_concurrency }} 路</span>
+          </div>
+        </div>
+        <p v-else-if="llm.gpu" class="mb-2 text-slate-500">未检测到 NVIDIA 显卡（显存探测仅支持 nvidia-smi）。</p>
+
+        <p>模型的加载与显卡分配由<strong>推理引擎</strong>决定，应用无法直接指定 GPU。请按引擎方式配置：</p>
         <p class="mt-1"><strong class="text-jade-400">LM Studio：</strong>在每个模型的「加载设置 / GPU Offload」中选择目标 GPU；或在启动 LM Studio 前设置 <code>CUDA_VISIBLE_DEVICES=0</code>（仅暴露快速卡）。</p>
         <p class="mt-1"><strong class="text-jade-400">Ollama：</strong>关闭服务后设置 <code>CUDA_VISIBLE_DEVICES</code>（NVIDIA）/ <code>ROCR_VISIBLE_DEVICES</code>（AMD）后重启 <code>ollama serve</code>，使模型只落在指定 GPU。</p>
         <p class="mt-1">调整可见设备后，回到本页点击「应用 / 切换模型」重新加载即可。切换模型时，应用会请求卸载旧模型以释放显存。</p>
+        <p class="mt-2 border-t border-ink-600/60 pt-2">
+          <strong class="text-gold-400">并行抽取：</strong>在「图书馆」抽取面板可将并发设为 1–4 路。应用会并行发起请求，但需引擎支持——<strong>Ollama</strong> 需以 <code>OLLAMA_NUM_PARALLEL&gt;=2</code> 启动；<strong>LM Studio</strong> 需在服务设置中开启并发/批处理。当模型显存占用低于单卡 80% 时，应用会给出建议并发数。
+        </p>
       </section>
     </div>
   </div>

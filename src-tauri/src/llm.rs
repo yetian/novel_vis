@@ -249,6 +249,113 @@ fn ollama_root(base: &str) -> String {
     base.trim_end_matches('/').trim_end_matches("/v1").to_string()
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct GpuInfo {
+    pub name: String,
+    pub total_bytes: u64,
+    pub used_bytes: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct GpuStatus {
+    pub gpus: Vec<GpuInfo>,
+    /// 当前模型占用显存（仅 Ollama `/api/ps` 提供）。
+    pub model_vram_bytes: Option<u64>,
+    /// 建议并发数（基于显存余量启发式）。
+    pub suggested_concurrency: u32,
+}
+
+/// 通过 `nvidia-smi` 探测 NVIDIA 显卡显存（尽力而为，非 NVIDIA 返回空）。
+fn detect_gpus() -> Vec<GpuInfo> {
+    let output = std::process::Command::new("nvidia-smi")
+        .args([
+            "--query-gpu=name,memory.total,memory.used",
+            "--format=csv,noheader,nounits",
+        ])
+        .output();
+    match output {
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout)
+            .lines()
+            .filter_map(|line| {
+                let parts: Vec<String> = line.split(',').map(|s| s.trim().to_string()).collect();
+                if parts.len() < 3 {
+                    return None;
+                }
+                let total_mib: u64 = parts[1].parse().ok()?;
+                let used_mib: u64 = parts[2].parse().ok()?;
+                Some(GpuInfo {
+                    name: parts[0].clone(),
+                    total_bytes: total_mib * 1024 * 1024,
+                    used_bytes: used_mib * 1024 * 1024,
+                })
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// 汇总 GPU 显存与当前模型占用，并给出建议并发数。
+pub async fn gpu_status(config: &LlmConfig) -> GpuStatus {
+    let gpus = detect_gpus();
+    let model_vram_bytes = match config.engine {
+        EngineKind::Ollama => ollama_ps_vram(config).await,
+        _ => None,
+    };
+
+    // 启发式：模型显存占用低于单卡总显存的 80% 时才建议并发。
+    let mut suggested_concurrency = 1u32;
+    if let Some(model_vram) = model_vram_bytes {
+        if let Some(gpu) = gpus.iter().max_by_key(|g| g.total_bytes) {
+            if gpu.total_bytes > 0 {
+                let ratio = model_vram as f64 / gpu.total_bytes as f64;
+                suggested_concurrency = if ratio <= 0.5 {
+                    4
+                } else if ratio <= 0.65 {
+                    3
+                } else if ratio <= 0.8 {
+                    2
+                } else {
+                    1
+                };
+            }
+        }
+    }
+
+    GpuStatus {
+        gpus,
+        model_vram_bytes,
+        suggested_concurrency,
+    }
+}
+
+async fn ollama_ps_vram(config: &LlmConfig) -> Option<u64> {
+    let client = build_client(config).ok()?;
+    let url = endpoint(&ollama_root(&config.base_url), "api/ps");
+    let resp = client.get(&url).send().await.ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    #[derive(Deserialize)]
+    struct Ps {
+        #[serde(default)]
+        models: Vec<PsModel>,
+    }
+    #[derive(Deserialize)]
+    struct PsModel {
+        #[serde(default)]
+        name: String,
+        #[serde(default)]
+        size_vram: u64,
+    }
+    let parsed: Ps = resp.json().await.ok()?;
+    parsed
+        .models
+        .iter()
+        .find(|m| m.name == config.model || m.name.starts_with(&config.model))
+        .map(|m| m.size_vram)
+        .or_else(|| parsed.models.first().map(|m| m.size_vram))
+}
+
 /// 查询引擎当前“已加载/常驻”的模型（尽力而为，失败返回空）。
 pub async fn list_loaded_models(config: &LlmConfig) -> AppResult<Vec<ModelInfo>> {
     let client = build_client(config)?;

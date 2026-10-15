@@ -147,6 +147,12 @@ pub async fn test_connection(config: LlmConfig) -> AppResult<bool> {
     llm::health_check(&config).await
 }
 
+/// GPU 显存与建议并发数（尽力而为）。
+#[tauri::command]
+pub async fn gpu_status(config: LlmConfig) -> AppResult<llm::GpuStatus> {
+    Ok(llm::gpu_status(&config).await)
+}
+
 /// 确保书籍原文已加载到内存：优先命中缓存，否则按记录的路径重新读取并校验签名。
 fn ensure_book_loaded(state: &AppState, book_id: i64) -> AppResult<()> {
     if state.book(book_id).is_some() {
