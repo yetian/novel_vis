@@ -3,6 +3,42 @@
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/) 与 [Conventional Commits](https://www.conventionalcommits.org/zh-hans/)。
 每个有意义的功能实现或修复均递增 PATCH 版本。
 
+## [0.1.8] - docs
+
+- 新增**强制提交规则**（`design.md` §11.1、README）：任何有意义的变更完成后必须立即提交并递增 PATCH，提交后保持工作区干净；仅明确要求时合并提交。
+- 本版本一次性提交了 v0.1.3 → v0.1.8 的累积变更（用户明确要求）。
+
+## [0.1.7] - feat(import)
+
+- 合订本（一文件多书）探测：解析 EPUB3 `nav.xhtml` 与 EPUB2 `toc.ncx` 顶级分组，映射为章节区间候选。
+- 新增 `inspect_book` 命令（只读探查）与 `MultiBookDialog.vue`；导入前由用户确认「作为多本导入 / 作为单本导入」。
+- `ingest_book` 支持 `splitIntoBooks`，新增 `split_book`（按候选拆分并重排章节索引，未覆盖章节归入「书名 · 其他」）。
+- 新增 NCX/nav 探测与拆分的单元测试。
+
+## [0.1.6] - feat(i18n)
+
+- 新增中文友好解码 `parser::encoding`：支持 UTF-8 / GBK / GB18030 / Big5，含 BOM 检测、XML 编码声明嗅探，以及「GBK 字节被误标为 windows-1252」的启发式纠正。
+- EPUB 章节按 XML `encoding="..."` 声明解码；MOBI `textEncoding` 数值映射为编码名，1252/未知交由启发式判定。
+- LLM 系统提示词明确要求自然语言字段输出简体中文，仅 JSON 键名与枚举保持英文，专有名词保留原写法。
+- 章节标题推测扩展中文标记（番外/终章/外传/尾声/引子/后记）。
+- 新增编码相关单元测试。
+
+## [0.1.5] - fix(parser)
+
+- 修复 `extract_html_title` 在按固定字节截断时遇到多字节字符（中文）触发的 panic（`byte index ... is not a char boundary`）；改为按 UTF-8 字符边界截断。
+- 新增回归测试：长中文标题不 panic、标题抽取与字符边界工具函数。
+
+## [0.1.4] - test
+
+- 新增 Rust 测试套件（26 个单元测试 + 1 个集成测试）：解析、JSON 修复/分块、SQLite 持久化、数据目录解析。
+- 修复 EPUB 解析缺陷：OPF 中自闭合的 `<item/>` / `<itemref/>`（`Event::Empty`）此前被忽略，导致清单/书脊为空；由新增测试捕获。
+- `package.json` 新增 `test` / `test:rust` 脚本。
+
+## [0.1.3] - fix(storage)
+
+- 数据库与引擎配置改存用户配置目录 `local/<APPNAME>`（Linux `~/.config/local/chronospace-reader/`），不再使用 Tauri app-data 目录；新增 `paths.rs` 统一解析，支持 `CHRONOSPACE_DATA_DIR` 覆盖。
+- 新增 `get_data_dir` 命令，引擎设置页展示数据存储位置。
+
 ## [0.1.2] - fix(tooling)
 
 - `bump-version.mjs` 现同步更新 `src-tauri/Cargo.lock` 中本包版本，避免 cargo 二次改写产生游离改动。

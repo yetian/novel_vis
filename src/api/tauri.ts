@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  BookInspection,
   BookRow,
   ChapterExtractionResult,
   ExtractionRequest,
@@ -20,7 +21,9 @@ function guard<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 export const api = {
-  ingestBook: (path: string) => guard(() => invoke<IngestResult>("ingest_book", { path })),
+  inspectBook: (path: string) => guard(() => invoke<BookInspection>("inspect_book", { path })),
+  ingestBook: (path: string, splitIntoBooks = false) =>
+    guard(() => invoke<IngestResult[]>("ingest_book", { path, splitIntoBooks })),
   listBooks: () => guard(() => invoke<BookRow[]>("list_books")),
   getTimeline: (bookId: number) => guard(() => invoke<TimelineBundle>("get_timeline", { bookId })),
   deleteBook: (bookId: number) => guard(() => invoke<void>("delete_book", { bookId })),
@@ -34,4 +37,5 @@ export const api = {
   resumeExtraction: (bookId: number) => guard(() => invoke<void>("resume_extraction", { bookId })),
   cancelExtraction: (bookId: number) => guard(() => invoke<void>("cancel_extraction", { bookId })),
   readTextFile: (path: string) => guard(() => invoke<string>("read_text_file", { path })),
+  getDataDir: () => guard(() => invoke<string>("get_data_dir")),
 };

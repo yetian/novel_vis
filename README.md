@@ -1,6 +1,6 @@
 # 时空编年史 · ChronoSpace Reader
 
-> 当前版本：**v0.1.2**
+> 当前版本：**v0.1.8**
 
 **ChronoSpace Reader（时空编年史）** 是一款跨平台桌面应用，使用 **Tauri 2.0（Rust）+ Vue 3（Vite / Pinia / TypeScript / TailwindCSS）** 构建。
 它把 EPUB / MOBI / AZW3 电子书**在内存中**解析分章，借助**本地大模型**（LM Studio 或 Ollama，OpenAI 兼容 API）抽取**时间、空间、人物、物品/功法与因果**结构，持久化到本地 SQLite，并以**交互式时空图谱**呈现，一键导出可部署到 GitHub Pages 的**零依赖单页 HTML**。
@@ -12,6 +12,8 @@
 ## ✨ 功能特性
 
 - **内存电子书解析**：EPUB（ZIP + OPF spine 解析）、MOBI / AZW3（PalmDB + PalmDOC 解压）全流程内存处理，流式分块避免磁盘膨胀。
+- **合订本拆分**：解析 EPUB 目录（NCX / EPUB3 nav）顶级分组，自动探测「一个文件包含多本书」；导入前弹出确认对话框，由用户选择**作为多本分别导入**或**作为单本导入**（候选未覆盖的章节归入《书名 · 其他》）。
+- **中文友好**：面向中文小说设计。解析层支持 **UTF-8 / GBK / GB18030 / Big5**（含 BOM 检测与「把 GBK 误标为 windows-1252」的启发式纠正）；LLM 提示词要求所有自然语言字段输出**简体中文**，仅 JSON 键名与枚举值（如 `CONTINUOUS`、`ITEM`）保持英文；界面与导出页使用中文无衬线字体栈（Noto Sans SC / 苹方 / 微软雅黑）。
 - **本地大模型抽取**：
   - 双引擎支持：**LM Studio**（`http://localhost:1234/v1`）与 **Ollama**（`http://localhost:11434/v1`），亦可接入任意 OpenAI 兼容端点。
   - 自动探测模型列表 `/v1/models`（Ollama 回退 `/api/tags`），内置 `qwen2.5-0.5b / 1.5b / 3b`、`gemma-2-2b` 等快速选择芯片。
@@ -107,6 +109,25 @@ npm run tauri:dev
 
 ---
 
+## 💾 数据存储位置
+
+数据保存在**用户配置目录**下的 `local/<APPNAME>` 命名空间（`APPNAME = chronospace-reader`）：
+
+| 平台 | 路径 |
+| --- | --- |
+| Linux / Mint | `~/.config/local/chronospace-reader/` |
+| macOS | `~/Library/Application Support/local/chronospace-reader/` |
+| Windows | `%APPDATA%\local\chronospace-reader\` |
+
+其中：
+
+- `chronospace.sqlite3` —— 结构化抽取结果（书籍 / 章节 / 时空节点 / 实体 / 事件）。
+- `llm_config.json` —— 引擎配置（LM Studio / Ollama / 自定义端点）。
+
+可用环境变量 `CHRONOSPACE_DATA_DIR` 覆盖该目录。**原始小说文件不会被复制、移动或修改**，仅在导入时读入内存；应用重启后需重新导入才能再次抽取。
+
+---
+
 ## 🛠 构建与发布
 
 ```bash
@@ -121,6 +142,21 @@ npm run tauri:build
 ```
 
 产物位于 `src-tauri/target/release/bundle/`。
+
+---
+
+## 🧪 测试
+
+后端（Rust）测试覆盖解析、抽取与持久化的关键逻辑：
+
+```bash
+npm run test          # 等价于 npm run test:rust -> cargo test
+```
+
+- **单元测试**（`#[cfg(test)]`，共 38 项）：`parser::util`（HTML 清洗/实体解码/哈希/标题推测）、`parser::encoding`（UTF-8 / GBK / BOM / XML 编码嗅探 / 中文可读性打分）、`parser::epub`（内存 ZIP 构造的端到端 EPUB 解析、NCX/EPUB3 nav 合订本探测、UTF-8 边界安全的标题抽取）、`parser::mobi`（PalmDOC 解压）、`parser::mod`（格式探测 + 合订本拆分与再索引）、`pipeline`（JSON 修复/重试/分块/视角归一化）、`db`（模式 + 持久化 + 级联删除 + 幂等）、`paths`（数据目录解析）。
+- **集成测试**（`src-tauri/tests/pipeline_db_roundtrip.rs`）：通过公开 API 验证「LLM JSON → SQLite → 时空聚合查询」全链路。
+
+前端目前仅有类型检查（`npm run typecheck`）。
 
 ---
 
@@ -193,10 +229,13 @@ git commit -m "docs: update README.md and design.md for spatiotemporal pipeline 
 
 ```bash
 npm run bump:patch                 # 1) 递增 PATCH
-# 2) 同步更新 README.md / design.md 的变更日志
+# 2) 同步更新 README.md / design.md / CHANGELOG.md
 npm run docs:check                 # 3) 校验文档同步
+npm run test                       # 4) 运行测试
 git add -A && git commit -m "feat(core): ... v0.1.1"
 ```
+
+> **提交时机（强制）**：**任何有意义的功能、修复或文档更新完成后必须立即提交**，不得让不相关改动长期堆积。提交后工作区应保持干净（`git status` 无改动）。仅当明确要求「一次性提交」时才合并多笔变更。详见 `design.md` §11.1。
 
 ---
 

@@ -6,6 +6,7 @@ import Sidebar from "@/components/Sidebar.vue";
 import LibraryView from "@/components/LibraryView.vue";
 import SpacetimeCanvas from "@/components/SpacetimeCanvas.vue";
 import LlmSettings from "@/components/LlmSettings.vue";
+import MultiBookDialog from "@/components/MultiBookDialog.vue";
 import ToastHost from "@/components/ToastHost.vue";
 import { useUiStore, type ViewKey } from "@/stores/ui";
 import { useLibraryStore } from "@/stores/library";
@@ -38,7 +39,7 @@ onMounted(async () => {
     const drop = await webview.onDragDropEvent(async (event) => {
       if (event.payload.type === "drop") {
         for (const path of event.payload.paths) {
-          await library.ingest(path);
+          await library.requestIngest(path);
         }
       }
     });
@@ -103,6 +104,7 @@ onBeforeUnmount(() => {
       </main>
     </div>
 
+    <MultiBookDialog />
     <ToastHost />
   </div>
 </template>

@@ -114,12 +114,35 @@ pub struct ParsedChapter {
     pub char_count: usize,
 }
 
+/// 单本电子书中可能包含的候选书目（用于合订本/合集的拆分确认）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BookCandidate {
+    pub title: String,
+    pub start_index: i64,
+    pub end_index: i64,
+    pub chapter_count: usize,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct ParsedBook {
     pub title: String,
     pub author: Option<String>,
     pub format: String,
     pub chapters: Vec<ParsedChapter>,
+    /// 由目录结构推断出的候选书目；长度 >= 2 时提示可能为合订本。
+    pub candidates: Vec<BookCandidate>,
+}
+
+/// 导入前的文件探查结果，供前端弹出「多本 / 单本」确认。
+#[derive(Debug, Clone, Serialize)]
+pub struct BookInspection {
+    pub title: String,
+    pub author: Option<String>,
+    pub format: String,
+    pub total_chapters: usize,
+    pub suspected_multi_book: bool,
+    pub signals: Vec<String>,
+    pub candidates: Vec<BookCandidate>,
 }
 
 #[derive(Debug, Clone, Serialize)]

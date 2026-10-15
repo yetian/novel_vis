@@ -94,15 +94,63 @@ pub fn guess_title(text: &str, fallback_index: i64) -> String {
         }
         if t.chars().count() <= 40 {
             let lower = t.to_lowercase();
-            if lower.starts_with("chapter")
-                || t.starts_with('第')
+            let cn_marker = t.starts_with('第')
                 || t.starts_with("序")
                 || t.starts_with("楔子")
                 || t.starts_with("卷")
-            {
+                || t.starts_with("番外")
+                || t.starts_with("终章")
+                || t.starts_with("外传")
+                || t.starts_with("尾声")
+                || t.starts_with("引子")
+                || t.starts_with("后记");
+            let en_marker = lower.starts_with("chapter")
+                || lower.starts_with("prologue")
+                || lower.starts_with("epilogue");
+            if cn_marker || en_marker {
                 return t.to_string();
             }
         }
     }
     format!("第 {} 章", fallback_index + 1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn strip_html_turns_blocks_into_newlines() {
+        assert_eq!(strip_html("<p>Hello<br/>World</p>"), "Hello\nWorld");
+    }
+
+    #[test]
+    fn strip_html_drops_script_and_style() {
+        assert_eq!(
+            strip_html("<style>.a{color:red}</style><script>bad()</script><p>正文</p>"),
+            "正文"
+        );
+    }
+
+    #[test]
+    fn decode_entities_named_and_numeric() {
+        assert_eq!(decode_entities("a &amp; b &#65; &#x42; &lt;"), "a & b A B <");
+        assert_eq!(decode_entities("&nbsp;引号&mdash;破折号&hellip;"), " 引号—破折号…");
+    }
+
+    #[test]
+    fn hash_is_stable_hex_and_sensitive() {
+        let a = hash_text("时空编年史");
+        let b = hash_text("时空编年史");
+        assert_eq!(a, b);
+        assert_eq!(a.len(), 64);
+        assert!(a.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_ne!(a, hash_text("时空编年史!"));
+    }
+
+    #[test]
+    fn guess_title_prefers_chapter_heading_else_fallback() {
+        assert_eq!(guess_title("第三章 风起\n正文内容", 0), "第三章 风起");
+        assert_eq!(guess_title("没有标题的开头\n正文", 4), "第 5 章");
+    }
 }

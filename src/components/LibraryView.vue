@@ -24,7 +24,7 @@ async function pickFiles() {
   });
   const list = Array.isArray(selected) ? selected : selected ? [selected] : [];
   for (const path of list) {
-    await library.ingest(path as string);
+    await library.requestIngest(path as string);
   }
 }
 

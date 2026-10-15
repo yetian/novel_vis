@@ -1,7 +1,12 @@
 import { defineStore } from "pinia";
 import { api } from "@/api/tauri";
-import type { BookRow, TimelineBundle } from "@/types/schema";
+import type { BookInspection, BookRow, TimelineBundle } from "@/types/schema";
 import { useUiStore } from "./ui";
+
+export interface PendingImport {
+  path: string;
+  inspection: BookInspection;
+}
 
 export const useLibraryStore = defineStore("library", {
   state: () => ({
@@ -10,6 +15,7 @@ export const useLibraryStore = defineStore("library", {
     timeline: null as TimelineBundle | null,
     loading: false,
     ingesting: false,
+    pending: null as PendingImport | null,
   }),
   getters: {
     activeBook(state): BookRow | null {
@@ -35,21 +41,50 @@ export const useLibraryStore = defineStore("library", {
         this.loading = false;
       }
     },
-    async ingest(path: string) {
+    /// 导入前先探查；疑似合订本时挂起并请求用户确认。
+    async requestIngest(path: string) {
       const ui = useUiStore();
       this.ingesting = true;
       try {
-        const result = await api.ingestBook(path);
-        ui.toast(`已导入《${result.title}》，共 ${result.total_chapters} 章`, "success");
+        const inspection = await api.inspectBook(path);
+        if (inspection.suspected_multi_book && inspection.candidates.length >= 2) {
+          this.pending = { path, inspection };
+          return;
+        }
+        await this.doIngest(path, false);
+      } catch (e) {
+        ui.toast(`导入失败：${String(e)}`, "error");
+      } finally {
+        this.ingesting = false;
+      }
+    },
+    async doIngest(path: string, splitIntoBooks: boolean) {
+      const ui = useUiStore();
+      this.ingesting = true;
+      try {
+        const results = await api.ingestBook(path, splitIntoBooks);
+        if (results.length === 1) {
+          ui.toast(`已导入《${results[0].title}》，共 ${results[0].total_chapters} 章`, "success");
+        } else {
+          ui.toast(`已拆分为 ${results.length} 本导入`, "success");
+        }
+        this.pending = null;
         await this.refresh();
-        await this.open(result.book_id);
-        return result;
+        if (results.length) await this.open(results[0].book_id);
+        return results;
       } catch (e) {
         ui.toast(`导入失败：${String(e)}`, "error");
         return null;
       } finally {
         this.ingesting = false;
       }
+    },
+    async confirmPending(splitIntoBooks: boolean) {
+      if (!this.pending) return;
+      await this.doIngest(this.pending.path, splitIntoBooks);
+    },
+    cancelPending() {
+      this.pending = null;
     },
     async open(bookId: number) {
       const ui = useUiStore();

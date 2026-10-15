@@ -462,4 +462,101 @@ pub const SYSTEM_PROMPT: &str = r#"你是一个中文小说叙事结构分析引
 3. 无法确定的信息使用空字符串或 0，不要省略字段。
 4. 《凡人修仙传》等修仙小说的世界层级请合理区分（如 人界 / 灵界 / 仙界）。
 5. 物品若具有长期伏笔价值（如“掌天瓶”），future_hook_flag 设为 true。
+6. 所有自然语言字段（人物名、地点、角色、描述、用途、摘要、raw_marker、reference_anchor 等）一律使用【简体中文】输出；仅 JSON 的键名与机器枚举值（如 CONTINUOUS / FIRST_APPEARANCE / ITEM）保持英文。
+7. 专有名词保留原作写法，不要翻译或音译（如“韩立”“掌天瓶”“越国”“神手谷”）。
 "#;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::{json, Value};
+
+    #[test]
+    fn extract_json_block_strips_text_and_fences() {
+        let raw = "好的，结果如下：\n```json\n{\"a\":1}\n```\n完成";
+        assert_eq!(extract_json_block(raw).unwrap(), "{\"a\":1}");
+        assert!(extract_json_block("没有任何括号").is_none());
+    }
+
+    #[test]
+    fn repair_json_text_removes_comments_and_trailing_commas() {
+        let broken = "{ // 注释\n \"a\": 1, \n }";
+        let fixed = repair_json_text(broken);
+        let v: Value = serde_json::from_str(&fixed).unwrap();
+        assert_eq!(v["a"], 1);
+    }
+
+    #[test]
+    fn parse_extraction_valid_payload() {
+        let payload = json!({
+            "chapter_index": 12,
+            "chapter_title": "七玄深谷",
+            "narrative_perspective": "third_person",
+            "temporal": {"type":"JUMP_FORWARD","raw_marker":"三年后","relative_delta_days":1095,"reference_anchor":"入门"},
+            "spatial": {"world":"人界","region":"越国","site":"神手谷","movement_type":"DUNGEON_ENTER","source_site":"广场"},
+            "characters":[{"name":"韩立","action":"FIRST_APPEARANCE","role":"主角","description":"少年"}],
+            "items_and_skills":[{"name":"掌天瓶","category":"ITEM","acquired_from":{"spatial":"后山","temporal":"入夜"},"usage_in_chapter":"拾取","future_hook_flag":true}],
+            "plot_summary":"韩立拾得掌天瓶"
+        })
+        .to_string();
+
+        let (ext, repaired) = parse_extraction(&payload).unwrap();
+        assert!(!repaired);
+        assert_eq!(ext.chapter_index, 12);
+        assert_eq!(ext.temporal.as_ref().unwrap().relative_delta_days, Some(1095));
+        assert_eq!(ext.spatial.as_ref().unwrap().world.as_deref(), Some("人界"));
+        assert_eq!(ext.characters.len(), 1);
+        assert_eq!(ext.characters[0].action, "FIRST_APPEARANCE");
+        assert!(ext.items_and_skills[0].future_hook_flag);
+    }
+
+    #[test]
+    fn parse_extraction_repairs_trailing_comma() {
+        let broken =
+            r#"{"chapter_index":1,"characters":[{"name":"韩立"}],"items_and_skills":[],}"#;
+        let (ext, repaired) = parse_extraction(broken).unwrap();
+        assert!(repaired);
+        assert_eq!(ext.characters.len(), 1);
+        assert_eq!(ext.characters[0].name, "韩立");
+    }
+
+    #[test]
+    fn parse_extraction_normalizes_first_person() {
+        let payload = json!({
+            "narrative_perspective": "first_person",
+            "characters": [{"name": "PROTAGONIST_FIRST_PERSON", "action": "ACTIVE"}],
+            "items_and_skills": []
+        })
+        .to_string();
+        let (ext, _) = parse_extraction(&payload).unwrap();
+        assert_eq!(ext.narrative_perspective.as_deref(), Some("first_person"));
+        assert_eq!(ext.characters[0].name, "PROTAGONIST_FIRST_PERSON");
+    }
+
+    #[test]
+    fn parse_extraction_drops_nameless_entries() {
+        let payload = r#"{"characters":[{"action":"ACTIVE"},{"name":"韩立"}],"items_and_skills":[{"category":"ITEM"}]}"#;
+        let (ext, _) = parse_extraction(payload).unwrap();
+        assert_eq!(ext.characters.len(), 1);
+        assert_eq!(ext.characters[0].name, "韩立");
+        assert!(ext.items_and_skills.is_empty());
+    }
+
+    #[test]
+    fn parse_extraction_errors_without_json() {
+        assert!(parse_extraction("完全没有 JSON 对象").is_err());
+    }
+
+    #[test]
+    fn split_chunks_splits_long_text_without_empty_chunks() {
+        let text = format!("{}\n{}", "甲".repeat(2000), "乙".repeat(2000));
+        let chunks = split_chunks(&text, 3000);
+        assert_eq!(chunks.len(), 2);
+        assert!(chunks.iter().all(|c| !c.trim().is_empty()));
+    }
+
+    #[test]
+    fn split_chunks_keeps_short_text_single() {
+        assert_eq!(split_chunks("短文本", 3000).len(), 1);
+    }
+}

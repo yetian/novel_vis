@@ -1,6 +1,6 @@
 # ChronoSpace Reader · 架构设计蓝图（design.md）
 
-> 当前版本：**v0.1.2**
+> 当前版本：**v0.1.8**
 > 本文档描述系统架构、数据流、SQLite 关系模式、状态机、协议契约与 UI 组件层级，并与代码库保持同步。
 
 ---
@@ -62,6 +62,7 @@ flowchart TB
 | 模块 | 职责 |
 | --- | --- |
 | `parser/` | 格式探测、内存解析、分章、纯文本化（去标签、实体解码） |
+| `parser/encoding` | 中文友好解码：BOM 检测、可靠 Unicode 声明、候选（UTF-8 / GBK / windows-1252）可读性打分；纠正「GBK 字节被误标为 windows-1252」 |
 | `llm.rs` | OpenAI 兼容客户端：模型探测、`chat/completions`、JSON 模式 |
 | `pipeline.rs` | 分块、提示词、调用、JSON 修复与重试、事务持久化、进度事件 |
 | `db.rs` | 迁移、CRUD、聚合查询（`timeline_bundle`） |
@@ -188,6 +189,7 @@ erDiagram
 - 外键均带 `ON DELETE CASCADE`（`entities.first_appeared_chapter_id` 为 `SET NULL`）。
 - `PRAGMA journal_mode=WAL`、`foreign_keys=ON`、`synchronous=NORMAL`。
 - 迁移策略：全部语句使用 `CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS`，可幂等重复执行。
+- 存储位置：由 `paths.rs` 解析为用户配置目录下的 `local/<APPNAME>`（Linux `~/.config/local/chronospace-reader/`，macOS `~/Library/Application Support/local/chronospace-reader/`，Windows `%APPDATA%\local\chronospace-reader\`），可用 `CHRONOSPACE_DATA_DIR` 覆盖。数据库文件 `chronospace.sqlite3`；同样的目录保存 `llm_config.json`。原文不落盘，仅驻内存。
 - 一个章节可对应**多个** `spatiotemporal_nodes`（分块抽取），画布查询取每章最早节点作为代表。
 
 ---
@@ -236,11 +238,50 @@ erDiagram
 
 ---
 
+### 5.1 中文与编码处理
+
+- **解析层**（`parser::encoding::smart_decode`）：BOM → 可靠 Unicode 声明 → 候选打分（CJK 字符加分、替换符/控制符扣分），支持 UTF-8 / GBK / GB18030 / Big5。MOBI 头的 `textEncoding` 数值映射为编码名，`1252` 或未知值交由启发式判定，从而纠正中文书中「GBK 字节被误标为 windows-1252」的常见问题。EPUB 章节按 XML prolog 的 `encoding="..."` 声明解码（`sniff_xml_encoding`）。
+- **抽取层**：系统提示词要求所有自然语言字段输出**简体中文**，仅 JSON 键名与机器枚举（`CONTINUOUS`、`FIRST_APPEARANCE`、`ITEM` 等）保持英文；专有名词保留原作写法。
+- **展示层**：界面与导出页使用中文无衬线字体栈（Noto Sans SC / 苹方 / 微软雅黑）。
+
+### 5.2 合订本检测与拆分
+
+一个 EPUB 文件可能包含多本书（合集/合订本）。流程为「**先探查、再确认、后导入**」：
+
+```mermaid
+sequenceDiagram
+  participant FE as 前端
+  participant CMD as commands
+  participant PAR as parser::epub
+  FE->>CMD: inspect_book(path)
+  CMD->>PAR: parse_book → candidates
+  PAR-->>CMD: BookCandidate[]（目录顶级分组）
+  CMD-->>FE: BookInspection { suspected_multi_book, candidates }
+  alt suspected_multi_book
+    FE->>FE: 弹出确认对话框（多本 / 单本 / 取消）
+    FE->>CMD: ingest_book(path, splitIntoBooks)
+    CMD->>PAR: split_book(book, candidates)
+    CMD->>CMD: 逐本 insert_book + insert_chapter + cache
+    CMD-->>FE: IngestResult[]
+  else 单本
+    FE->>CMD: ingest_book(path, false)
+  end
+```
+
+- **探测信号**：解析 EPUB3 `nav.xhtml`（`epub:type="toc"`）或 EPUB2 `toc.ncx` 的 `navMap` 顶级分组；每个顶级分组通过其 `href` 子树映射到 spine 章节区间。当 ≥2 个分组各自能映射到正文时，判定疑似合订本。
+- **候选结构**：`BookCandidate { title, start_index, end_index, chapter_count }`（章节区间为 `ParsedBook.chapters` 的索引）。
+- **拆分语义**：`split_book` 按候选区间取章节并**重排 `chapter_index`**（每本从 0 起）；未被任何候选覆盖的章节归入《原书名 · 其他》，避免正文丢失。
+- **确认契约**：`inspect_book` 只读探查、不落库；`ingest_book(splitIntoBooks)` 才真正写库并缓存到 `AppState.books`（每本独立缓存）。
+- **UI**：`MultiBookDialog.vue` 展示候选书目与章节区间，提供「作为多本导入 / 作为单本导入 / 取消」。MOBI/AZW3 暂不做多本探测（无结构化目录）。
+
+---
+
 ## 6. IPC 协议契约（Tauri Commands）
 
 | 命令 | 入参 | 出参 | 说明 |
 | --- | --- | --- | --- |
-| `ingest_book` | `path: string` | `IngestResult` | 读文件入内存并解析落库 |
+| `inspect_book` | `path: string` | `BookInspection` | 导入前探查，判断是否疑似合订本 |
+| `ingest_book` | `path: string, splitIntoBooks?: boolean` | `IngestResult[]` | 读文件入内存并解析落库，可选拆分为多本 |
 | `list_books` | — | `BookRow[]` | 书库列表（含抽取进度） |
 | `get_timeline` | `bookId: number` | `TimelineBundle` | 画布聚合数据 |
 | `delete_book` | `bookId: number` | `void` | 级联删除 |
@@ -366,9 +407,30 @@ feat(export): generate standalone single-page html bundle v0.1.3
 docs: update README.md and design.md for spatiotemporal pipeline v0.1.4
 ```
 
+### 11.1 提交时机（强制规则）
+
+- **每次变更即提交**：任何有意义的功能、修复、重构或文档更新完成后，**必须立即提交**，并同步递增 **PATCH** 版本。不得让不相关的改动长期堆积在工作区。
+- **提交后工作区必须干净**：提交前先跑 `npm run docs:check`（与 `cargo test`），提交后 `git status` 应无未提交改动。
+- **一次提交聚焦一件事**：每条提交对应一个逻辑变更；提交信息末尾附带版本号（如 `... v0.1.8`）。
+- **例外**：仅当用户明确要求「一次性提交」时，才可将多笔累积变更合并为单个提交（并在提交正文中列出覆盖的版本区间）。
+
 ---
 
-## 12. 后续演进（Roadmap）
+## 12. 测试策略
+
+| 层级 | 位置 | 覆盖 |
+| --- | --- | --- |
+| 单元 | `#[cfg(test)]` 内联模块 | `parser::util` / `parser::encoding` / `parser::epub` / `parser::mobi` / `parser::mod` / `pipeline` / `db` / `paths` |
+| 集成 | `src-tauri/tests/pipeline_db_roundtrip.rs` | 公开 API 的「解析 → 持久化 → 查询」全链路 |
+
+- 命令：`cargo test`（或 `npm run test:rust`）。
+- DB 测试使用 `Db::open_in_memory()`（`rusqlite` 内存库，零副作用）。
+- EPUB 测试在内存中用 `zip::ZipWriter` 构造最小 EPUB，覆盖 container → OPF → spine 全流程（该测试曾捕获 “OPF self-closing `<item/>` 未被解析” 的真实缺陷）。
+- 解析与 JSON 修复为纯函数，便于确定性断言。
+
+---
+
+## 13. 后续演进（Roadmap）
 
 - HUFF/CDIC 与常见 DRM-free 变体解析。
 - 每分块独立时空节点在画布上的分段轨迹渲染。

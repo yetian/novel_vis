@@ -2,7 +2,7 @@ use crate::error::AppResult;
 use crate::models::*;
 use parking_lot::Mutex;
 use rusqlite::{params, Connection, OptionalExtension};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 /// 全局数据库句柄。内部用 `Mutex` 串行化访问，满足 Tauri `State` 的 `Send + Sync`。
 pub struct Db {
@@ -485,11 +485,6 @@ impl Db {
     }
 }
 
-/// 计算数据的默认存放路径（应用数据目录下的 chronospace.sqlite3）。
-pub fn default_db_path(app_data_dir: &Path) -> PathBuf {
-    app_data_dir.join("chronospace.sqlite3")
-}
-
 /// 事务内 upsert 实体（首次出现的章节仅在为空时写入）。
 fn upsert_entity_tx(
     tx: &rusqlite::Transaction<'_>,
@@ -524,4 +519,80 @@ fn entity_id_tx(
         |r| r.get(0),
     )?;
     Ok(id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn sample_extraction() -> SegmentExtraction {
+        serde_json::from_value(json!({
+            "chapter_index": 0,
+            "chapter_title": "第一章",
+            "narrative_perspective": "third_person",
+            "temporal": {"type":"JUMP_FORWARD","raw_marker":"三年后","relative_delta_days":1095},
+            "spatial": {"world":"人界","region":"越国","site":"神手谷","movement_type":"LOCAL_MOVE","source_site":"广场"},
+            "characters":[{"name":"韩立","action":"FIRST_APPEARANCE","role":"主角","description":"少年"}],
+            "items_and_skills":[{"name":"掌天瓶","category":"ITEM","acquired_from":{"spatial":"后山","temporal":"入夜"},"usage_in_chapter":"拾取","future_hook_flag":true}],
+            "plot_summary":"韩立拾得掌天瓶"
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn schema_persist_and_read_back() {
+        let db = Db::open_in_memory().unwrap();
+        let book_id = db.insert_book("测试书", Some("作者甲"), "EPUB", 1).unwrap();
+        let ch_id = db.insert_chapter(book_id, 0, "第一章", "hash123", None).unwrap();
+        assert!(!db.chapter_extracted(ch_id).unwrap());
+
+        db.persist_extraction(book_id, ch_id, &sample_extraction()).unwrap();
+        assert!(db.chapter_extracted(ch_id).unwrap());
+
+        let bundle = db.timeline_bundle(book_id).unwrap();
+        assert_eq!(bundle.chapters.len(), 1);
+        let ch = &bundle.chapters[0];
+        assert_eq!(ch.site.as_deref(), Some("神手谷"));
+        assert_eq!(ch.world.as_deref(), Some("人界"));
+        assert_eq!(ch.temporal_type.as_deref(), Some("JUMP_FORWARD"));
+        assert_eq!(ch.time_offset_days, Some(1095));
+        assert_eq!(ch.movement_type.as_deref(), Some("LOCAL_MOVE"));
+        assert_eq!(ch.raw_text_summary.as_deref(), Some("韩立拾得掌天瓶"));
+
+        assert_eq!(bundle.entities.len(), 2);
+        let hanli = bundle.entities.iter().find(|e| e.name == "韩立").unwrap();
+        assert_eq!(hanli.entity_type, "CHARACTER");
+        assert_eq!(hanli.first_appeared_chapter_index, Some(0));
+        assert!(bundle.entities.iter().any(|e| e.name == "掌天瓶" && e.entity_type == "ITEM"));
+        assert_eq!(bundle.events.len(), 2);
+
+        let books = db.list_books().unwrap();
+        assert_eq!(books.len(), 1);
+        assert_eq!(books[0].extracted_chapters, 1);
+    }
+
+    #[test]
+    fn cascade_delete_removes_children() {
+        let db = Db::open_in_memory().unwrap();
+        let book_id = db.insert_book("B", None, "MOBI", 1).unwrap();
+        let ch_id = db.insert_chapter(book_id, 0, "c0", "h", None).unwrap();
+        db.persist_extraction(book_id, ch_id, &sample_extraction()).unwrap();
+
+        db.delete_book(book_id).unwrap();
+        assert!(db.list_books().unwrap().is_empty());
+        assert!(db.get_entities(book_id).unwrap().is_empty());
+        assert!(db.get_events(book_id).unwrap().is_empty());
+        assert!(db.get_chapters(book_id).unwrap().is_empty());
+    }
+
+    #[test]
+    fn insert_chapter_is_idempotent() {
+        let db = Db::open_in_memory().unwrap();
+        let book_id = db.insert_book("B", None, "EPUB", 1).unwrap();
+        let a = db.insert_chapter(book_id, 0, "t", "h1", None).unwrap();
+        let b = db.insert_chapter(book_id, 0, "t-again", "h2", None).unwrap();
+        assert_eq!(a, b);
+        assert_eq!(db.get_chapters(book_id).unwrap().len(), 1);
+    }
 }

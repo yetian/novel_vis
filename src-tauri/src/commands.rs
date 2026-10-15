@@ -2,38 +2,74 @@ use crate::error::{AppError, AppResult};
 use crate::llm;
 use crate::models::*;
 use crate::parser;
+use crate::paths;
 use crate::pipeline;
 use crate::state::AppState;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, State};
 
-const LLM_CONFIG_FILE: &str = "llm_config.json";
-
-/// 导入电子书：读取文件到内存，解析分章，写入数据库并缓存原文。
+/// 导入前探查：解析文件并判断是否疑似为「一文件多本书」的合订本。
 #[tauri::command]
-pub async fn ingest_book(state: State<'_, AppState>, path: String) -> AppResult<IngestResult> {
+pub async fn inspect_book(path: String) -> AppResult<BookInspection> {
     let bytes = tokio::fs::read(&path).await?;
     let book = parser::parse_book(&path, &bytes)?;
 
-    let db = &state.db;
-    let book_id = db.insert_book(
-        &book.title,
-        book.author.as_deref(),
-        &book.format,
-        book.chapters.len() as i64,
-    )?;
-    for ch in &book.chapters {
-        db.insert_chapter(book_id, ch.chapter_index, &ch.title, &ch.content_hash, None)?;
+    let suspected = book.candidates.len() >= 2;
+    let mut signals = Vec::new();
+    if suspected {
+        signals.push(format!("目录识别出 {} 个顶级分组", book.candidates.len()));
     }
 
-    let result = IngestResult {
-        book_id,
-        title: book.title.clone(),
-        author: book.author.clone(),
-        format: book.format.clone(),
+    Ok(BookInspection {
+        title: book.title,
+        author: book.author,
+        format: book.format,
         total_chapters: book.chapters.len(),
+        suspected_multi_book: suspected,
+        signals,
+        candidates: book.candidates,
+    })
+}
+
+/// 导入电子书：读取文件到内存，解析分章，写入数据库并缓存原文。
+/// `split_into_books` 为真且探测到多个候选书目时，拆分为多本分别入库。
+#[tauri::command]
+pub async fn ingest_book(
+    state: State<'_, AppState>,
+    path: String,
+    split_into_books: Option<bool>,
+) -> AppResult<Vec<IngestResult>> {
+    let bytes = tokio::fs::read(&path).await?;
+    let book = parser::parse_book(&path, &bytes)?;
+
+    let parts = if split_into_books.unwrap_or(false) && book.candidates.len() >= 2 {
+        parser::split_book(&book, &book.candidates)
+    } else {
+        vec![book]
     };
-    state.cache_book(book_id, book);
-    Ok(result)
+
+    let mut results = Vec::with_capacity(parts.len());
+    for part in parts {
+        let db = &state.db;
+        let book_id = db.insert_book(
+            &part.title,
+            part.author.as_deref(),
+            &part.format,
+            part.chapters.len() as i64,
+        )?;
+        for ch in &part.chapters {
+            db.insert_chapter(book_id, ch.chapter_index, &ch.title, &ch.content_hash, None)?;
+        }
+        results.push(IngestResult {
+            book_id,
+            title: part.title.clone(),
+            author: part.author.clone(),
+            format: part.format.clone(),
+            total_chapters: part.chapters.len(),
+        });
+        state.cache_book(book_id, part);
+    }
+
+    Ok(results)
 }
 
 #[tauri::command]
@@ -58,16 +94,10 @@ pub fn delete_book(state: State<'_, AppState>, book_id: i64) -> AppResult<()> {
 
 /// 保存 LLM 引擎配置（LM Studio / Ollama / 自定义）到状态与磁盘。
 #[tauri::command]
-pub fn save_llm_config(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    config: LlmConfig,
-) -> AppResult<()> {
-    if let Ok(dir) = app.path().app_data_dir() {
-        std::fs::create_dir_all(&dir).ok();
-        let path = dir.join(LLM_CONFIG_FILE);
+pub fn save_llm_config(state: State<'_, AppState>, config: LlmConfig) -> AppResult<()> {
+    if paths::ensure_data_dir().is_ok() {
         if let Ok(json) = serde_json::to_string_pretty(&config) {
-            std::fs::write(path, json).ok();
+            std::fs::write(paths::llm_config_path(), json).ok();
         }
     }
     *state.llm.lock() = Some(config);
@@ -75,20 +105,23 @@ pub fn save_llm_config(
 }
 
 #[tauri::command]
-pub fn get_llm_config(app: AppHandle, state: State<'_, AppState>) -> AppResult<Option<LlmConfig>> {
+pub fn get_llm_config(state: State<'_, AppState>) -> AppResult<Option<LlmConfig>> {
     if let Some(cfg) = state.llm.lock().clone() {
         return Ok(Some(cfg));
     }
-    if let Ok(dir) = app.path().app_data_dir() {
-        let path = dir.join(LLM_CONFIG_FILE);
-        if let Ok(raw) = std::fs::read_to_string(path) {
-            if let Ok(cfg) = serde_json::from_str::<LlmConfig>(&raw) {
-                *state.llm.lock() = Some(cfg.clone());
-                return Ok(Some(cfg));
-            }
+    if let Ok(raw) = std::fs::read_to_string(paths::llm_config_path()) {
+        if let Ok(cfg) = serde_json::from_str::<LlmConfig>(&raw) {
+            *state.llm.lock() = Some(cfg.clone());
+            return Ok(Some(cfg));
         }
     }
     Ok(None)
+}
+
+/// 返回应用数据目录（供界面展示与排查）。
+#[tauri::command]
+pub fn get_data_dir() -> AppResult<String> {
+    Ok(paths::data_dir().to_string_lossy().to_string())
 }
 
 /// 通过 OpenAI 兼容 `/v1/models`（或 Ollama `/api/tags`）自动探测模型列表。

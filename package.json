@@ -1,7 +1,7 @@
 {
   "name": "chronospace-reader",
   "private": true,
-  "version": "0.1.2",
+  "version": "0.1.8",
   "type": "module",
   "description": "ChronoSpace Reader (时空编年史) - 本地小说时空、人物与因果抽取与可视化桌面应用",
   "scripts": {
@@ -9,6 +9,8 @@
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "vue-tsc --noEmit",
+    "test": "npm run test:rust",
+    "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",

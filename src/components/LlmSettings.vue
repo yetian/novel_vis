@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { onMounted } from "vue";
+import { onMounted, ref } from "vue";
 import { useLlmStore } from "@/stores/llm";
+import { api, isTauri } from "@/api/tauri";
 import { ENGINE_PRESETS, MODEL_CHIPS, type EngineKind } from "@/types/schema";
 
 const llm = useLlmStore();
+const dataDir = ref("");
 
 const engines: { key: EngineKind; icon: string; hint: string }[] = [
   { key: "lm_studio", icon: "fa-desktop", hint: "默认 http://localhost:1234/v1" },
@@ -13,6 +15,7 @@ const engines: { key: EngineKind; icon: string; hint: string }[] = [
 
 onMounted(() => {
   if (!llm.models.length) llm.fetchModels().catch(() => undefined);
+  if (isTauri) api.getDataDir().then((dir) => (dataDir.value = dir)).catch(() => undefined);
 });
 </script>
 
@@ -143,6 +146,17 @@ onMounted(() => {
           <i class="fa-solid fa-circle-check mr-1" />连接正常
         </span>
       </div>
+
+      <section v-if="dataDir" class="panel p-5 text-xs">
+        <span class="label">数据存储位置</span>
+        <div class="flex items-center gap-2">
+          <i class="fa-solid fa-folder-open text-jade-500" />
+          <code class="truncate text-slate-300">{{ dataDir }}</code>
+        </div>
+        <p class="mt-2 leading-relaxed text-slate-500">
+          SQLite 数据库（chronospace.sqlite3）与引擎配置（llm_config.json）保存在此用户目录下。原始小说文件不会被复制、移动或修改。
+        </p>
+      </section>
 
       <section class="panel p-5 text-xs leading-relaxed text-slate-400">
         <h4 class="mb-2 text-sm font-semibold text-slate-200">本地引擎快速上手</h4>

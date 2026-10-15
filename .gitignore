@@ -1,20 +1,67 @@
 # 依赖
 node_modules/
 src-tauri/target/
+.pnpm-store/
+.yarn/
+.npm/
 
 # 构建产物
 dist/
+dist-ssr/
 src-tauri/gen/
+*.tsbuildinfo
 *.local
 
-# 编辑器 / 系统
+# 测试 / 覆盖率
+coverage/
+.nyc_output/
+*.lcov
+
+# 编辑器 / IDE
 .vscode/*
 !.vscode/extensions.json
+!.vscode/settings.json
 .idea/
-.DS_Store
-*.log
+.fleet/
+.zed/
+.nova/
+.history/
+.marscode/
+.cursor/
+*.swp
+*.swo
+*~
+*.rs.bk
 
-# 运行期数据（内存数据库与本地配置）
+# 缓存
+.cache/
+.parcel-cache/
+.turbo/
+.vite/
+.eslintcache
+.stylelintcache
+
+# 系统文件
+.DS_Store
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+Desktop.ini
+
+# 日志与临时文件
+*.log
+*.tmp
+*.temp
+*.bak
+*.orig
+
+# 环境变量（切勿提交密钥）
+.env
+.env.*
+!.env.example
+
+# 运行期数据（本地 SQLite 与配置）
 *.sqlite3
 *.sqlite3-journal
 *.sqlite3-wal

@@ -26,6 +26,23 @@ export interface IngestResult {
   total_chapters: number;
 }
 
+export interface BookCandidate {
+  title: string;
+  start_index: number;
+  end_index: number;
+  chapter_count: number;
+}
+
+export interface BookInspection {
+  title: string;
+  author?: string | null;
+  format: string;
+  total_chapters: number;
+  suspected_multi_book: boolean;
+  signals: string[];
+  candidates: BookCandidate[];
+}
+
 export interface BookRow {
   id: number;
   title: string;

@@ -1,13 +1,14 @@
-mod commands;
-mod db;
-mod error;
-mod llm;
-mod models;
-mod parser;
-mod pipeline;
-mod state;
+pub mod commands;
+pub mod db;
+pub mod error;
+pub mod llm;
+pub mod models;
+pub mod parser;
+pub mod paths;
+pub mod pipeline;
+pub mod state;
 
-use db::{default_db_path, Db};
+use db::Db;
 use state::AppState;
 use tauri::Manager;
 
@@ -18,15 +19,14 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_os::init())
         .setup(|app| {
-            let data_dir = app
-                .path()
-                .app_data_dir()
-                .expect("无法解析应用数据目录");
-            let db = Db::open(&default_db_path(&data_dir)).expect("初始化 SQLite 失败");
+            // 数据存于用户目录（例如 Linux: ~/.config/local/chronospace-reader/）。
+            paths::ensure_data_dir().expect("无法创建应用数据目录");
+            let db = Db::open(&paths::db_path()).expect("初始化 SQLite 失败");
             app.manage(AppState::new(db));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::inspect_book,
             commands::ingest_book,
             commands::list_books,
             commands::get_timeline,
@@ -41,6 +41,7 @@ pub fn run() {
             commands::resume_extraction,
             commands::cancel_extraction,
             commands::read_text_file,
+            commands::get_data_dir,
         ])
         .run(tauri::generate_context!())
         .expect("运行 Tauri 应用失败");

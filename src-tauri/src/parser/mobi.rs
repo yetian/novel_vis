@@ -65,7 +65,7 @@ pub fn parse(bytes: &[u8], fallback_title: &str) -> AppResult<ParsedBook> {
     }
     raw.truncate(text_length);
 
-    let decoded = decode_bytes(&raw, encoding);
+    let decoded = super::encoding::smart_decode(&raw, declared_name(encoding));
     let html = decoded.replace("mbp:pagebreak", "\n@@PAGEBREAK@@\n");
     let plain = strip_html(&html);
 
@@ -109,6 +109,7 @@ pub fn parse(bytes: &[u8], fallback_title: &str) -> AppResult<ParsedBook> {
         author: None,
         format: format.into(),
         chapters,
+        candidates: Vec::new(),
     })
 }
 
@@ -217,14 +218,18 @@ fn detect_encoding(record0: &[u8]) -> u32 {
     }
 }
 
-fn decode_bytes(raw: &[u8], encoding: u32) -> String {
-    match encoding {
-        65001 => String::from_utf8_lossy(raw).to_string(),
-        1252 => {
-            let (cow, _, _) = encoding_rs::WINDOWS_1252.decode(raw);
-            cow.into_owned()
-        }
-        _ => String::from_utf8_lossy(raw).to_string(),
+/// 将 MOBI 头的 textEncoding 数值映射为编码名。
+/// `1252` / 未知值返回 `None`，交由启发式判定（中文书常把 GBK 误标为 1252）。
+fn declared_name(code: u32) -> Option<&'static str> {
+    match code {
+        65001 => Some("utf-8"),
+        1200 => Some("utf-16le"),
+        1201 => Some("utf-16be"),
+        936 => Some("gbk"),
+        950 => Some("big5"),
+        932 => Some("shift_jis"),
+        20936 => Some("gb18030"),
+        _ => None,
     }
 }
 
@@ -267,4 +272,29 @@ fn chunk_by_size(text: &str, size: usize) -> Vec<String> {
         .map(|c| c.iter().collect::<String>().trim().to_string())
         .filter(|s| s.chars().count() > 20)
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn palmdoc_passes_literals() {
+        assert_eq!(palmdoc_decompress(b"ABC"), b"ABC".to_vec());
+    }
+
+    #[test]
+    fn palmdoc_expands_space_char_pairs() {
+        // 0xC0..0xFF -> 空格 + (byte ^ 0x80)
+        assert_eq!(palmdoc_decompress(&[0xC1]), b" A".to_vec());
+        assert_eq!(palmdoc_decompress(&[0xC0]), b" @".to_vec());
+    }
+
+    #[test]
+    fn palmdoc_resolves_back_reference() {
+        // "ABC" 之后 distance=3, length=3 -> "ABCABC"
+        let mut input = b"ABC".to_vec();
+        input.extend_from_slice(&[0x80, 0x18]);
+        assert_eq!(palmdoc_decompress(&input), b"ABCABC".to_vec());
+    }
 }
