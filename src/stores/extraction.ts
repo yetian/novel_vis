@@ -1,7 +1,9 @@
 import { defineStore } from "pinia";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { open } from "@tauri-apps/plugin-dialog";
 import { api } from "@/api/tauri";
-import type { ChapterExtractionResult, LogEvent, ProgressEvent } from "@/types/schema";
+import { errCode, errText } from "@/utils/error";
+import type { ChapterExtractionResult, ExtractionRequest, LogEvent, ProgressEvent } from "@/types/schema";
 import { useLlmStore } from "./llm";
 import { useLibraryStore } from "./library";
 import { useUiStore } from "./ui";
@@ -86,13 +88,25 @@ export const useExtractionStore = defineStore("extraction", {
       job.logs = [];
       job.progress = null;
 
+      const request: ExtractionRequest = {
+        book_id: bookId,
+        llm: llm.config,
+        chunk_chars: this.chunkChars,
+        skip_extracted: this.skipExtracted,
+      };
+
       try {
-        job.results = await api.startExtraction({
-          book_id: bookId,
-          llm: llm.config,
-          chunk_chars: this.chunkChars,
-          skip_extracted: this.skipExtracted,
-        });
+        try {
+          job.results = await api.startExtraction(request);
+        } catch (e) {
+          // 原文不在内存/源文件缺失或不匹配 → 引导用户重新定位源文件后重试一次。
+          const code = errCode(e);
+          if ((code === "SOURCE_MISSING" || code === "SOURCE_MISMATCH") && (await this.relocate(bookId, e))) {
+            job.results = await api.startExtraction(request);
+          } else {
+            throw e;
+          }
+        }
         const ok = job.results.filter((r) => r.ok).length;
         ui.toast(
           `《${useLibraryStore().books.find((b) => b.id === bookId)?.title ?? bookId}》抽取完成：成功 ${ok}/${job.results.length} 章`,
@@ -102,11 +116,42 @@ export const useExtractionStore = defineStore("extraction", {
         if (library.activeBookId === bookId) await library.reloadTimeline();
         await library.refresh();
       } catch (e) {
-        ui.toast(`抽取失败：${String(e)}`, "error");
+        ui.toast(`抽取失败：${errText(e)}`, "error");
       } finally {
         job.running = false;
         job.paused = false;
       }
+    },
+    /// 引导用户重新选择源文件。返回是否已成功关联（可重试抽取）。
+    async relocate(bookId: number, error: unknown): Promise<boolean> {
+      const ui = useUiStore();
+      const code = errCode(error);
+      const proceed = await ui.askConfirm({
+        title: code === "SOURCE_MISSING" ? "找不到源文件" : "源文件不匹配",
+        message: `${errText(error)}\n\n是否现在重新选择该书的源文件？`,
+        confirmLabel: "选择文件",
+      });
+      if (!proceed) return false;
+
+      const selected = await open({
+        multiple: false,
+        filters: [{ name: "电子书", extensions: ["epub", "mobi", "azw3"] }],
+      });
+      if (!selected || Array.isArray(selected)) return false;
+
+      let result = await api.setBookSource(bookId, selected as string, false);
+      if (!result.matched) {
+        const force = await ui.askConfirm({
+          title: "文件不一致",
+          message: `${result.message}\n\n仍要强制关联该文件吗？`,
+          confirmLabel: "强制关联",
+          danger: true,
+        });
+        if (!force) return false;
+        result = await api.setBookSource(bookId, selected as string, true);
+      }
+      ui.toast(result.message, "success");
+      return true;
     },
     async pause(bookId: number) {
       await api.pauseExtraction(bookId);

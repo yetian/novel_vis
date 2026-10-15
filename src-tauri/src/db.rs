@@ -99,6 +99,22 @@ impl Db {
             CREATE INDEX IF NOT EXISTS idx_events_chapter ON entity_events(chapter_id);
             "#,
         )?;
+
+        // 增量迁移：为旧库补充列（SQLite 不支持 ADD COLUMN IF NOT EXISTS）。
+        let mut columns: Vec<String> = Vec::new();
+        {
+            let mut stmt = conn.prepare("PRAGMA table_info(books)")?;
+            let mut rows = stmt.query([])?;
+            while let Some(row) = rows.next()? {
+                columns.push(row.get::<_, String>(1)?);
+            }
+        }
+        if !columns.iter().any(|c| c == "source_path") {
+            conn.execute("ALTER TABLE books ADD COLUMN source_path TEXT", [])?;
+        }
+        if !columns.iter().any(|c| c == "content_sig") {
+            conn.execute("ALTER TABLE books ADD COLUMN content_sig TEXT", [])?;
+        }
         Ok(())
     }
 
@@ -110,13 +126,42 @@ impl Db {
         author: Option<&str>,
         format: &str,
         total_chapters: i64,
+        source_path: Option<&str>,
+        content_sig: Option<&str>,
     ) -> AppResult<i64> {
         let conn = self.conn.lock();
         conn.execute(
-            "INSERT INTO books (title, author, format, total_chapters) VALUES (?1, ?2, ?3, ?4)",
-            params![title, author, format, total_chapters],
+            "INSERT INTO books (title, author, format, total_chapters, source_path, content_sig)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![title, author, format, total_chapters, source_path, content_sig],
         )?;
         Ok(conn.last_insert_rowid())
+    }
+
+    /// 读取书籍的源文件路径与内容签名。
+    pub fn book_source(&self, book_id: i64) -> AppResult<(Option<String>, Option<String>)> {
+        let conn = self.conn.lock();
+        conn.query_row(
+            "SELECT source_path, content_sig FROM books WHERE id = ?1",
+            params![book_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .map_err(Into::into)
+    }
+
+    /// 更新书籍的源文件路径与内容签名（重新定位源文件时使用）。
+    pub fn update_book_source(
+        &self,
+        book_id: i64,
+        source_path: Option<&str>,
+        content_sig: Option<&str>,
+    ) -> AppResult<()> {
+        let conn = self.conn.lock();
+        conn.execute(
+            "UPDATE books SET source_path = ?1, content_sig = ?2 WHERE id = ?3",
+            params![source_path, content_sig, book_id],
+        )?;
+        Ok(())
     }
 
     pub fn insert_chapter(
@@ -340,7 +385,8 @@ impl Db {
         let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT b.id, b.title, b.author, b.format, b.total_chapters, b.created_at,
-                    (SELECT COUNT(DISTINCT n.chapter_id) FROM spatiotemporal_nodes n WHERE n.book_id = b.id)
+                    (SELECT COUNT(DISTINCT n.chapter_id) FROM spatiotemporal_nodes n WHERE n.book_id = b.id),
+                    b.source_path
              FROM books b ORDER BY b.created_at DESC",
         )?;
         let rows = stmt
@@ -353,6 +399,7 @@ impl Db {
                     total_chapters: r.get(4)?,
                     created_at: r.get(5)?,
                     extracted_chapters: r.get(6)?,
+                    source_path: r.get(7)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -363,7 +410,8 @@ impl Db {
         let conn = self.conn.lock();
         conn.query_row(
             "SELECT b.id, b.title, b.author, b.format, b.total_chapters, b.created_at,
-                    (SELECT COUNT(DISTINCT n.chapter_id) FROM spatiotemporal_nodes n WHERE n.book_id = b.id)
+                    (SELECT COUNT(DISTINCT n.chapter_id) FROM spatiotemporal_nodes n WHERE n.book_id = b.id),
+                    b.source_path
              FROM books b WHERE b.id = ?1",
             params![book_id],
             |r| {
@@ -375,6 +423,7 @@ impl Db {
                     total_chapters: r.get(4)?,
                     created_at: r.get(5)?,
                     extracted_chapters: r.get(6)?,
+                    source_path: r.get(7)?,
                 })
             },
         )
@@ -558,7 +607,7 @@ mod tests {
     #[test]
     fn schema_persist_and_read_back() {
         let db = Db::open_in_memory().unwrap();
-        let book_id = db.insert_book("测试书", Some("作者甲"), "EPUB", 1).unwrap();
+        let book_id = db.insert_book("测试书", Some("作者甲"), "EPUB", 1, None, None).unwrap();
         let ch_id = db.insert_chapter(book_id, 0, "第一章", "hash123", None).unwrap();
         assert!(!db.chapter_extracted(ch_id).unwrap());
 
@@ -590,7 +639,7 @@ mod tests {
     #[test]
     fn cascade_delete_removes_children() {
         let db = Db::open_in_memory().unwrap();
-        let book_id = db.insert_book("B", None, "MOBI", 1).unwrap();
+        let book_id = db.insert_book("B", None, "MOBI", 1, None, None).unwrap();
         let ch_id = db.insert_chapter(book_id, 0, "c0", "h", None).unwrap();
         db.persist_extraction(book_id, ch_id, &sample_extraction()).unwrap();
 
@@ -602,9 +651,26 @@ mod tests {
     }
 
     #[test]
+    fn book_source_roundtrip_and_relocate() {
+        let db = Db::open_in_memory().unwrap();
+        let id = db
+            .insert_book("B", None, "EPUB", 1, Some("/tmp/a.epub"), Some("sig-a"))
+            .unwrap();
+        assert_eq!(
+            db.book_source(id).unwrap(),
+            (Some("/tmp/a.epub".to_string()), Some("sig-a".to_string()))
+        );
+        db.update_book_source(id, Some("/tmp/b.epub"), Some("sig-b")).unwrap();
+        assert_eq!(
+            db.book_source(id).unwrap(),
+            (Some("/tmp/b.epub".to_string()), Some("sig-b".to_string()))
+        );
+    }
+
+    #[test]
     fn insert_chapter_is_idempotent() {
         let db = Db::open_in_memory().unwrap();
-        let book_id = db.insert_book("B", None, "EPUB", 1).unwrap();
+        let book_id = db.insert_book("B", None, "EPUB", 1, None, None).unwrap();
         let a = db.insert_chapter(book_id, 0, "t", "h1", None).unwrap();
         let b = db.insert_chapter(book_id, 0, "t-again", "h2", None).unwrap();
         assert_eq!(a, b);

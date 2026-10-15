@@ -47,6 +47,8 @@ pub async fn ingest_book(
         vec![book]
     };
 
+    let content_sig = parser::util::hash_bytes(&bytes);
+
     let mut results = Vec::with_capacity(parts.len());
     for part in parts {
         let db = &state.db;
@@ -55,6 +57,8 @@ pub async fn ingest_book(
             part.author.as_deref(),
             &part.format,
             part.chapters.len() as i64,
+            Some(path.as_str()),
+            Some(content_sig.as_str()),
         )?;
         for ch in &part.chapters {
             db.insert_chapter(book_id, ch.chapter_index, &ch.title, &ch.content_hash, None)?;
@@ -143,14 +147,74 @@ pub async fn test_connection(config: LlmConfig) -> AppResult<bool> {
     llm::health_check(&config).await
 }
 
-/// 启动批量抽取。
+/// 确保书籍原文已加载到内存：优先命中缓存，否则按记录的路径重新读取并校验签名。
+fn ensure_book_loaded(state: &AppState, book_id: i64) -> AppResult<()> {
+    if state.book(book_id).is_some() {
+        return Ok(());
+    }
+    let (path, sig) = state.db.book_source(book_id)?;
+    let path = path.ok_or_else(|| {
+        AppError::SourceMissing(format!("书籍 #{book_id} 未记录源文件路径，请重新导入"))
+    })?;
+    let bytes = std::fs::read(&path)
+        .map_err(|e| AppError::SourceMissing(format!("无法读取 {path}：{e}")))?;
+    if let Some(expected) = sig {
+        if parser::util::hash_bytes(&bytes) != expected {
+            return Err(AppError::SourceMismatch(path));
+        }
+    }
+    let parsed = parser::parse_book(&path, &bytes)?;
+    state.cache_book(book_id, parsed);
+    Ok(())
+}
+
+/// 启动批量抽取。若原文不在内存中，会尝试按记录的源文件路径重新加载。
 #[tauri::command]
 pub async fn start_extraction(
     app: AppHandle,
     state: State<'_, AppState>,
     request: pipeline::ExtractionRequest,
 ) -> AppResult<Vec<ChapterExtractionResult>> {
+    ensure_book_loaded(&state, request.book_id)?;
     pipeline::run_extraction(app, &state, request).await
+}
+
+/// 重新定位并关联书籍的源文件。`force` 为真时允许关联内容不一致的文件。
+#[tauri::command]
+pub async fn set_book_source(
+    state: State<'_, AppState>,
+    book_id: i64,
+    path: String,
+    force: Option<bool>,
+) -> AppResult<SourceCheck> {
+    let bytes = tokio::fs::read(&path).await?;
+    let parsed = parser::parse_book(&path, &bytes)?;
+    let new_sig = parser::util::hash_bytes(&bytes);
+    let (_, old_sig) = state.db.book_source(book_id)?;
+    let matched = old_sig.as_deref().map(|s| s == new_sig).unwrap_or(true);
+
+    if !matched && !force.unwrap_or(false) {
+        return Ok(SourceCheck {
+            matched: false,
+            message: format!("所选文件与记录的书籍内容不一致：{path}"),
+        });
+    }
+
+    state.db.update_book_source(book_id, Some(&path), Some(&new_sig))?;
+    state.cache_book(book_id, parsed);
+    Ok(SourceCheck {
+        matched,
+        message: if matched {
+            "已重新关联源文件".into()
+        } else {
+            "已强制关联到新的源文件".into()
+        },
+    })
+}
+
+#[tauri::command]
+pub fn get_book_source(state: State<'_, AppState>, book_id: i64) -> AppResult<Option<String>> {
+    Ok(state.db.book_source(book_id)?.0)
 }
 
 #[tauri::command]

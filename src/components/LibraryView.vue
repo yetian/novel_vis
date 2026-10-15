@@ -6,6 +6,7 @@ import { useLibraryStore } from "@/stores/library";
 import { useUiStore } from "@/stores/ui";
 import { buildStaticHtml } from "@/exporter/staticHtml";
 import { api, isTauri } from "@/api/tauri";
+import { errText } from "@/utils/error";
 import ExtractionRunner from "@/components/ExtractionRunner.vue";
 
 const library = useLibraryStore();
@@ -50,7 +51,7 @@ async function exportHtml(bookId: number) {
     await writeTextFile(target as string, buildStaticHtml(timeline));
     ui.toast("已导出可交互单页 HTML", "success");
   } catch (e) {
-    ui.toast(`导出失败：${String(e)}`, "error");
+    ui.toast(`导出失败：${errText(e)}`, "error");
   }
 }
 

@@ -1,6 +1,6 @@
 # ChronoSpace Reader · 架构设计蓝图（design.md）
 
-> 当前版本：**v0.1.13**
+> 当前版本：**v0.1.14**
 > 本文档描述系统架构、数据流、SQLite 关系模式、状态机、协议契约与 UI 组件层级，并与代码库保持同步。
 
 ---
@@ -144,6 +144,8 @@ erDiagram
     TEXT format
     INTEGER total_chapters
     TEXT created_at
+    TEXT source_path
+    TEXT content_sig
   }
   chapters {
     INTEGER id PK
@@ -288,6 +290,8 @@ sequenceDiagram
 | `get_timeline` | `bookId: number` | `TimelineBundle` | 画布聚合数据 |
 | `delete_book` | `bookId: number` | `void` | 级联删除 |
 | `clear_all_data` | — | `void` | 清空全部书籍与抽取数据（含内存缓存） |
+| `set_book_source` | `bookId: number, path: string, force?: boolean` | `SourceCheck` | 重新定位源文件并校验签名 |
+| `get_book_source` | `bookId: number` | `string \| null` | 读取记录的源文件路径 |
 | `save_llm_config` | `config: LlmConfig` | `void` | 写入状态与磁盘 |
 | `get_llm_config` | — | `LlmConfig \| null` | 读取配置 |
 | `list_models` | `config: LlmConfig` | `ModelInfo[]` | `/v1/models`（Ollama 回退 `/api/tags`） |
@@ -312,7 +316,9 @@ sequenceDiagram
 { "code": "LLM_ERROR", "message": "无法连接引擎 http://localhost:1234/v1/models: ..." }
 ```
 
-`code ∈ { DB_ERROR, PARSE_ERROR, UNSUPPORTED_FORMAT, LLM_ERROR, JSON_REPAIR_ERROR, IO_ERROR, SERDE_ERROR, INTERNAL_ERROR }`。
+`code ∈ { DB_ERROR, PARSE_ERROR, UNSUPPORTED_FORMAT, LLM_ERROR, JSON_REPAIR_ERROR, SOURCE_MISSING, SOURCE_MISMATCH, IO_ERROR, SERDE_ERROR, INTERNAL_ERROR }`。
+
+**源文件重定位**：`books.source_path` / `books.content_sig` 记录源文件与其 SHA-256 签名。抽取开始时若内存无原文，`ensure_book_loaded` 按路径重新解析并校验签名；缺失返回 `SOURCE_MISSING`、不匹配返回 `SOURCE_MISMATCH`，前端据此提示重新选择文件（可用 `set_book_source(..., force)` 强制关联）。
 
 ---
 

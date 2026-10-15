@@ -33,6 +33,8 @@ pub fn run() {
             commands::get_books_timeline,
             commands::delete_book,
             commands::clear_all_data,
+            commands::set_book_source,
+            commands::get_book_source,
             commands::save_llm_config,
             commands::get_llm_config,
             commands::list_models,

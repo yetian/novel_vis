@@ -3,6 +3,12 @@
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/) 与 [Conventional Commits](https://www.conventionalcommits.org/zh-hans/)。
 每个有意义的功能实现或修复均递增 PATCH 版本。
 
+## [0.1.14] - fix(core)
+
+- 源文件可重定位：`books` 新增 `source_path` / `content_sig`（SHA-256）；抽取开始时若原文不在内存，`ensure_book_loaded` 会按记录路径重新读取并校验签名（旧库自动增量迁移补列）。
+- 新增 `SOURCE_MISSING` / `SOURCE_MISMATCH` 错误码与 `set_book_source` / `get_book_source` 命令；前端在缺失/不匹配时引导重新选择文件，内容不一致需确认强制关联。
+- 修复错误提示显示 `[object Object]`：新增 `errText`/`errCode`，将 `{code,message}` 错误渲染为可读文本。
+
 ## [0.1.13] - fix(ui)
 
 - 提升空间图可读性：地点卡片改为高对比深色渐变填充 + 亮色描边 + 浅色加粗文字（带描边），世界面板加实线边框与金色标题；节点加入投影。

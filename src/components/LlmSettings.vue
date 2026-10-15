@@ -4,6 +4,7 @@ import { useLlmStore } from "@/stores/llm";
 import { useLibraryStore } from "@/stores/library";
 import { useUiStore } from "@/stores/ui";
 import { api, isTauri } from "@/api/tauri";
+import { errText } from "@/utils/error";
 import { ENGINE_PRESETS, MODEL_CHIPS, type EngineKind } from "@/types/schema";
 
 const llm = useLlmStore();
@@ -26,7 +27,7 @@ async function clearAllData() {
     library.timeline = null;
     ui.toast("已清空全部数据", "success");
   } catch (e) {
-    ui.toast(`清空失败：${String(e)}`, "error");
+    ui.toast(`清空失败：${errText(e)}`, "error");
   }
 }
 

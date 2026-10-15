@@ -51,6 +51,12 @@ export interface BookRow {
   total_chapters: number;
   created_at: string;
   extracted_chapters: number;
+  source_path?: string | null;
+}
+
+export interface SourceCheck {
+  matched: boolean;
+  message: string;
 }
 
 export interface ChapterRow {

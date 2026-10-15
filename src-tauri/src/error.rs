@@ -19,6 +19,12 @@ pub enum AppError {
     #[error("LLM 返回的 JSON 无法修复: {0}")]
     JsonRepair(String),
 
+    #[error("找不到源文件: {0}")]
+    SourceMissing(String),
+
+    #[error("源文件与记录的书籍不一致: {0}")]
+    SourceMismatch(String),
+
     #[error("IO 错误: {0}")]
     Io(#[from] std::io::Error),
 
@@ -37,6 +43,8 @@ impl AppError {
             AppError::UnsupportedFormat(_) => "UNSUPPORTED_FORMAT",
             AppError::Llm(_) => "LLM_ERROR",
             AppError::JsonRepair(_) => "JSON_REPAIR_ERROR",
+            AppError::SourceMissing(_) => "SOURCE_MISSING",
+            AppError::SourceMismatch(_) => "SOURCE_MISMATCH",
             AppError::Io(_) => "IO_ERROR",
             AppError::Serde(_) => "SERDE_ERROR",
             AppError::Internal(_) => "INTERNAL_ERROR",

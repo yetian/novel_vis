@@ -79,8 +79,13 @@ fn decode_one(entity: &str) -> Option<String> {
 }
 
 pub fn hash_text(text: &str) -> String {
+    hash_bytes(text.as_bytes())
+}
+
+/// 对任意字节（如源文件内容）计算 SHA-256，用于识别书籍签名。
+pub fn hash_bytes(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
-    hasher.update(text.as_bytes());
+    hasher.update(bytes);
     let digest = hasher.finalize();
     digest.iter().map(|b| format!("{:02x}", b)).collect()
 }

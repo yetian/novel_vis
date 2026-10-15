@@ -167,6 +167,14 @@ pub struct BookRow {
     pub total_chapters: i64,
     pub created_at: String,
     pub extracted_chapters: i64,
+    pub source_path: Option<String>,
+}
+
+/// 重新定位源文件的结果。
+#[derive(Debug, Clone, Serialize)]
+pub struct SourceCheck {
+    pub matched: bool,
+    pub message: String,
 }
 
 #[derive(Debug, Clone, Serialize)]

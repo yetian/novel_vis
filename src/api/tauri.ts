@@ -7,6 +7,7 @@ import type {
   IngestResult,
   LlmConfig,
   ModelInfo,
+  SourceCheck,
   TimelineBundle,
 } from "@/types/schema";
 
@@ -28,6 +29,9 @@ export const api = {
   getTimeline: (bookId: number) => guard(() => invoke<TimelineBundle>("get_timeline", { bookId })),
   deleteBook: (bookId: number) => guard(() => invoke<void>("delete_book", { bookId })),
   clearAllData: () => guard(() => invoke<void>("clear_all_data")),
+  setBookSource: (bookId: number, path: string, force = false) =>
+    guard(() => invoke<SourceCheck>("set_book_source", { bookId, path, force })),
+  getBookSource: (bookId: number) => guard(() => invoke<string | null>("get_book_source", { bookId })),
   saveLlmConfig: (config: LlmConfig) => guard(() => invoke<void>("save_llm_config", { config })),
   getLlmConfig: () => guard(() => invoke<LlmConfig | null>("get_llm_config")),
   listModels: (config: LlmConfig) => guard(() => invoke<ModelInfo[]>("list_models", { config })),

@@ -1,5 +1,6 @@
 import { defineStore } from "pinia";
 import { api } from "@/api/tauri";
+import { errText } from "@/utils/error";
 import type { EngineKind, LlmConfig, ModelInfo } from "@/types/schema";
 import { ENGINE_PRESETS } from "@/types/schema";
 import { useUiStore } from "./ui";
@@ -57,7 +58,7 @@ export const useLlmStore = defineStore("llm", {
         await api.saveLlmConfig(this.config);
         ui.toast(`已保存 ${this.engineLabel} 配置`, "success");
       } catch (e) {
-        ui.toast(`保存配置失败：${String(e)}`, "error");
+        ui.toast(`保存配置失败：${errText(e)}`, "error");
       }
     },
     async fetchModels() {
@@ -74,8 +75,8 @@ export const useLlmStore = defineStore("llm", {
         ui.toast(`发现 ${models.length} 个可用模型`, "success");
       } catch (e) {
         this.connected = false;
-        this.lastError = String(e);
-        ui.toast(`无法获取模型列表：${String(e)}`, "error");
+        this.lastError = errText(e);
+        ui.toast(`无法获取模型列表：${errText(e)}`, "error");
       } finally {
         this.loading = false;
       }
@@ -89,7 +90,7 @@ export const useLlmStore = defineStore("llm", {
         ui.toast(ok ? "连接成功" : "连接失败", ok ? "success" : "error");
       } catch (e) {
         this.connected = false;
-        ui.toast(`连接失败：${String(e)}`, "error");
+        ui.toast(`连接失败：${errText(e)}`, "error");
       } finally {
         this.loading = false;
       }

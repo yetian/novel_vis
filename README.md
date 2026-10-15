@@ -1,6 +1,6 @@
 # 时空编年史 · ChronoSpace Reader
 
-> 当前版本：**v0.1.13**
+> 当前版本：**v0.1.14**
 
 **ChronoSpace Reader（时空编年史）** 是一款跨平台桌面应用，使用 **Tauri 2.0（Rust）+ Vue 3（Vite / Pinia / TypeScript / TailwindCSS）** 构建。
 它把 EPUB / MOBI / AZW3 电子书**在内存中**解析分章，借助**本地大模型**（LM Studio 或 Ollama，OpenAI 兼容 API）抽取**时间、空间、人物、物品/功法与因果**结构，持久化到本地 SQLite，并以**交互式时空图谱**呈现，一键导出可部署到 GitHub Pages 的**零依赖单页 HTML**。
@@ -29,6 +29,7 @@
 - **静态 HTML 导出**：内联全部 JSON 数据，生成可直接上传 GitHub Pages 的单页交互式查看器。
 - **JSON 修复容错**：模型输出非法 JSON 时自动本地修复——平衡括号提取、去除注释/尾随逗号、**转义字符串内裸控制字符**、**补全缺失逗号**、**补齐被截断的闭合括号**；并支持从推理模型的 `reasoning_content` 字段回退取内容。失败后再用修复提示词重试 ≤3 次。
 - **重要操作确认**：删除书籍、取消抽取等破坏性操作均弹出确认对话框。
+- **源文件可重定位**：记录源文件路径与内容签名；重启后再次抽取会自动按路径重新加载原文，若文件被移动或替换会提示重新选择（内容不一致时需确认是否强制关联）。
 
 ---
 
@@ -156,7 +157,7 @@ npm run tauri:build
 npm run test          # 等价于 npm run test:rust -> cargo test
 ```
 
-- **单元测试**（`#[cfg(test)]`，共 43 项）：`parser::util`（HTML 清洗/实体解码/哈希/标题推测）、`parser::encoding`（UTF-8 / GBK / BOM / XML 编码嗅探 / 中文可读性打分）、`parser::epub`（内存 ZIP 构造的端到端 EPUB 解析、NCX/EPUB3 nav 合订本探测、UTF-8 边界安全的标题抽取）、`parser::mobi`（PalmDOC 解压）、`parser::mod`（格式探测 + 合订本拆分与再索引）、`pipeline`（JSON 修复/重试/分块/视角归一化）、`db`（模式 + 持久化 + 级联删除 + 幂等）、`paths`（数据目录解析）。
+- **单元测试**（`#[cfg(test)]`，共 44 项）：`parser::util`（HTML 清洗/实体解码/哈希/标题推测）、`parser::encoding`（UTF-8 / GBK / BOM / XML 编码嗅探 / 中文可读性打分）、`parser::epub`（内存 ZIP 构造的端到端 EPUB 解析、NCX/EPUB3 nav 合订本探测、UTF-8 边界安全的标题抽取）、`parser::mobi`（PalmDOC 解压）、`parser::mod`（格式探测 + 合订本拆分与再索引）、`pipeline`（JSON 修复/重试/分块/视角归一化）、`db`（模式 + 持久化 + 级联删除 + 幂等）、`paths`（数据目录解析）。
 - **集成测试**（`src-tauri/tests/pipeline_db_roundtrip.rs`）：通过公开 API 验证「LLM JSON → SQLite → 时空聚合查询」全链路。
 
 前端目前仅有类型检查（`npm run typecheck`）。
@@ -245,7 +246,7 @@ git add -A && git commit -m "feat(core): ... v0.1.1"
 ## ⚠️ 已知限制
 
 - **DRM / HUFF-CDIC**：加密电子书与 HUFF/CDIC 压缩的 MOBI 暂不支持（会给出明确错误）。
-- **原文缓存会话级**：为避免磁盘膨胀，原文仅驻留内存；应用重启后需重新导入再抽取（已抽取的结构化数据持久保存）。
+- **原文不落盘**：为避免磁盘膨胀，原文仅驻留内存；但会记录**源文件路径与内容签名**，重启后再次抽取会自动按路径重新加载并校验签名（无需重新导入）；若源文件被移动或替换会提示重新定位。若源文件已删除，则需重新选择。
 - **长章节分块**：超长章节按约 2k token 分块，逐块抽取后各自落库为独立时空节点。
 
 ---

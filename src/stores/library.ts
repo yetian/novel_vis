@@ -1,5 +1,6 @@
 import { defineStore } from "pinia";
 import { api } from "@/api/tauri";
+import { errText } from "@/utils/error";
 import type { BookInspection, BookRow, TimelineBundle } from "@/types/schema";
 import { useUiStore } from "./ui";
 
@@ -36,7 +37,7 @@ export const useLibraryStore = defineStore("library", {
           this.timeline = null;
         }
       } catch (e) {
-        ui.toast(`读取书库失败：${String(e)}`, "error");
+        ui.toast(`读取书库失败：${errText(e)}`, "error");
       } finally {
         this.loading = false;
       }
@@ -53,7 +54,7 @@ export const useLibraryStore = defineStore("library", {
         }
         await this.doIngest(path, false);
       } catch (e) {
-        ui.toast(`导入失败：${String(e)}`, "error");
+        ui.toast(`导入失败：${errText(e)}`, "error");
       } finally {
         this.ingesting = false;
       }
@@ -73,7 +74,7 @@ export const useLibraryStore = defineStore("library", {
         if (results.length) await this.open(results[0].book_id);
         return results;
       } catch (e) {
-        ui.toast(`导入失败：${String(e)}`, "error");
+        ui.toast(`导入失败：${errText(e)}`, "error");
         return null;
       } finally {
         this.ingesting = false;
@@ -99,7 +100,7 @@ export const useLibraryStore = defineStore("library", {
       try {
         this.timeline = await api.getTimeline(this.activeBookId);
       } catch (e) {
-        useUiStore().toast(`读取时空数据失败：${String(e)}`, "error");
+        useUiStore().toast(`读取时空数据失败：${errText(e)}`, "error");
       }
     },
     async remove(bookId: number) {
@@ -121,7 +122,7 @@ export const useLibraryStore = defineStore("library", {
         }
         await this.refresh();
       } catch (e) {
-        ui.toast(`删除失败：${String(e)}`, "error");
+        ui.toast(`删除失败：${errText(e)}`, "error");
       }
     },
   },
