@@ -26,6 +26,10 @@ pub struct ExtractionRequest {
 static TRAILING_COMMA_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r",(\s*[}\]])").unwrap());
 static LINE_COMMENT_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?m)//[^\n]*").unwrap());
 static BLOCK_COMMENT_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?s)/\*.*?\*/").unwrap());
+// 值之后、下一个字符串键之前缺少逗号（常见于小模型逐行输出）。
+static MISSING_COMMA_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r#"([}\]"]|true|false|null|[0-9])(\s*)("[A-Za-z_\u4e00-\u9fff])"#).unwrap()
+});
 
 /// 抽取管线主入口：逐章 -> 逐块调用本地大模型，产出结构化实体并持久化。
 pub async fn run_extraction(
@@ -298,10 +302,46 @@ fn extract_json_block(raw: &str) -> Option<String> {
 }
 
 fn repair_json_text(input: &str) -> String {
-    let no_block = BLOCK_COMMENT_RE.replace_all(input, "");
+    let trimmed = input.trim().trim_start_matches('\u{feff}');
+    let no_block = BLOCK_COMMENT_RE.replace_all(trimmed, "");
     let no_line = LINE_COMMENT_RE.replace_all(&no_block, "");
     let no_trailing = TRAILING_COMMA_RE.replace_all(&no_line, "$1");
-    escape_control_chars_in_strings(&no_trailing)
+    let escaped = escape_control_chars_in_strings(&no_trailing);
+    let with_commas = MISSING_COMMA_RE.replace_all(&escaped, "$1,$2$3");
+    balance_braces(&with_commas)
+}
+
+/// 补齐被截断时缺失的闭合括号（模型输出超长被截断的常见情况）。
+fn balance_braces(input: &str) -> String {
+    let mut stack: Vec<char> = Vec::new();
+    let mut in_string = false;
+    let mut escaped = false;
+    for ch in input.chars() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match ch {
+            '"' => in_string = true,
+            '{' => stack.push('}'),
+            '[' => stack.push(']'),
+            '}' | ']' => {
+                stack.pop();
+            }
+            _ => {}
+        }
+    }
+    let mut out = input.to_string();
+    while let Some(closer) = stack.pop() {
+        out.push(closer);
+    }
+    out
 }
 
 /// 转义字符串字面量内的裸控制字符（\u0000-\u001F）。
@@ -545,6 +585,7 @@ pub const SYSTEM_PROMPT: &str = r#"你是一个中文小说叙事结构分析引
 5. world 不要强行套用“界”之类的词，贴合原文语境即可。
 6. 所有自然语言字段（人物名、地点、角色、描述、用途、摘要、raw_marker、reference_anchor 等）使用【简体中文】输出；仅 JSON 的键名与机器枚举值（如 CONTINUOUS / FIRST_APPEARANCE / ITEM）保持英文。
 7. 专有名词保留原文写法，不要翻译或音译。
+8. 输出务必精简完整：plot_summary ≤ 40 字；description / role / usage_in_chapter 各 ≤ 20 字。避免冗长导致 JSON 被截断。
 "#;
 
 /// 过滤掉未在本段正文中出现的实体，抑制模型幻觉（例如照搬示例或其它作品的人名）。
@@ -666,6 +707,23 @@ mod tests {
             extract_json_block("{\"temporal\":{\"type\":\"CONTINUOUS\"}}尾").unwrap(),
             "{\"temporal\":{\"type\":\"CONTINUOUS\"}}"
         );
+    }
+
+    #[test]
+    fn repair_inserts_missing_commas() {
+        let broken = "{\"a\": 1\n\"b\": 2}";
+        let fixed = repair_json_text(broken);
+        let v: Value = serde_json::from_str(&fixed).unwrap();
+        assert_eq!(v["a"], 1);
+        assert_eq!(v["b"], 2);
+    }
+
+    #[test]
+    fn repair_balances_truncated_object() {
+        let truncated = "{\"a\": 1, \"characters\": [{\"name\": \"甲\"";
+        let fixed = repair_json_text(truncated);
+        let v: Value = serde_json::from_str(&fixed).unwrap();
+        assert_eq!(v["characters"][0]["name"], "甲");
     }
 
     #[test]

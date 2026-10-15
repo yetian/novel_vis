@@ -3,6 +3,13 @@
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/) 与 [Conventional Commits](https://www.conventionalcommits.org/zh-hans/)。
 每个有意义的功能实现或修复均递增 PATCH 版本。
 
+## [0.1.12] - fix(llm)
+
+- JSON 修复增强：补全缺失逗号（`expected , or }`）、补齐被截断的闭合括号；解析前去除 BOM。
+- LLM 客户端支持 `reasoning_content` / `reasoning` 回退，修复推理模型 `content` 为空导致的「未找到 JSON 对象」。
+- 提示词新增「输出精简完整」要求并提高默认 `max_tokens`（2048 → 3072），降低截断概率。
+- 修复图谱崩溃：地点节点 id 缺 `site::` 前缀导致节点未创建、边引用缺失（`Can not create edge ... nonexistent source`）；边创建前校验节点存在，`cy.animate` 拒绝被吞掉，渲染异常不再冒泡为未处理 Promise 拒绝。
+
 ## [0.1.11] - fix(llm)
 
 - 提示词题材无关化：移除所有示例专有名词（避免小模型照搬“韩立/掌天瓶/人界”等造成污染），明确 `world` 可为现实语境，不强制“界”类术语。

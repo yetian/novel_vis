@@ -15,9 +15,10 @@ const emit = defineEmits<{ (e: "select", payload: SiteSelection | null): void }>
 const container = ref<HTMLDivElement | null>(null);
 let cy: Core | null = null;
 
-const worldOf = (c: ChapterRow) => c.world || "未知空间";
-const siteOf = (c: ChapterRow) => c.site || c.region || worldOf(c);
-const siteKey = (c: ChapterRow) => `${worldOf(c)}::${siteOf(c)}`;
+const worldOf = (c: ChapterRow) => (c.world || "未知空间").trim() || "未知空间";
+const siteOf = (c: ChapterRow) => (c.site || c.region || worldOf(c)).trim() || worldOf(c);
+const worldNodeId = (world: string) => `world::${world}`;
+const siteNodeId = (c: ChapterRow) => `site::${worldOf(c)}::${siteOf(c)}`;
 
 const MOVEMENT_COLORS: Record<string, string> = {
   STAY: "#334155",
@@ -50,13 +51,13 @@ function computeLayout(): Layout {
       sitesByWorld.set(world, []);
       worldOrder.push(world);
     }
-    const key = siteKey(c);
-    if (!seen.has(key)) {
-      seen.add(key);
-      sitesByWorld.get(world)!.push(key);
-      weights.set(key, 0);
+    const id = siteNodeId(c);
+    if (!seen.has(id)) {
+      seen.add(id);
+      sitesByWorld.get(world)!.push(id);
+      weights.set(id, 0);
     }
-    weights.set(key, (weights.get(key) ?? 0) + 1);
+    weights.set(id, (weights.get(id) ?? 0) + 1);
   }
 
   const positions = new Map<string, { x: number; y: number }>();
@@ -69,11 +70,11 @@ function computeLayout(): Layout {
     const blockW = cols * CELL_W;
     const blockH = rows * CELL_H;
 
-    positions.set(`world::${world}`, { x: cursorX + blockW / 2, y: 0 });
-    sites.forEach((key, i) => {
+    positions.set(worldNodeId(world), { x: cursorX + blockW / 2, y: 0 });
+    sites.forEach((id, i) => {
       const col = i % cols;
       const row = Math.floor(i / cols);
-      positions.set(key, {
+      positions.set(id, {
         x: cursorX + col * CELL_W + CELL_W / 2,
         y: -blockH / 2 + row * CELL_H + CELL_H / 2,
       });
@@ -87,37 +88,41 @@ function computeLayout(): Layout {
 function buildElements(): ElementDefinition[] {
   const { positions, weights } = computeLayout();
   const elements: ElementDefinition[] = [];
+  const nodeIds = new Set<string>();
 
   for (const [id, pos] of positions) {
     if (id.startsWith("world::")) {
-      elements.push({ data: { id, label: id.slice(7), kind: "world" }, position: pos });
+      elements.push({ data: { id, label: id.slice("world::".length), kind: "world" }, position: pos });
+      nodeIds.add(id);
     }
   }
   for (const [id, pos] of positions) {
     if (id.startsWith("site::")) {
       const [, world, site] = id.split("::");
       elements.push({
-        data: { id, label: site, kind: "site", parent: `world::${world}`, weight: weights.get(id) ?? 1 },
+        data: { id, label: site || "未命名", kind: "site", parent: worldNodeId(world), weight: weights.get(id) ?? 1 },
         position: pos,
       });
+      nodeIds.add(id);
     }
   }
 
+  // 仅当两端节点都存在时才创建边，避免 cytoscape 抛错。
   for (let i = 1; i < props.chapters.length; i++) {
-    const src = siteKey(props.chapters[i - 1]);
-    const dst = siteKey(props.chapters[i]);
-    if (src !== dst) {
-      const movement = props.chapters[i].movement_type || "STAY";
-      elements.push({
-        data: {
-          id: `edge::${i}`,
-          source: src,
-          target: dst,
-          movement,
-          color: MOVEMENT_COLORS[movement] || "#334155",
-        },
-      });
-    }
+    const source = siteNodeId(props.chapters[i - 1]);
+    const target = siteNodeId(props.chapters[i]);
+    if (source === target) continue;
+    if (!nodeIds.has(source) || !nodeIds.has(target)) continue;
+    const movement = props.chapters[i].movement_type || "STAY";
+    elements.push({
+      data: {
+        id: `edge::${i}`,
+        source,
+        target,
+        movement,
+        color: MOVEMENT_COLORS[movement] || "#334155",
+      },
+    });
   }
 
   elements.push({ data: { id: "token", label: "主角", kind: "token" } });
@@ -177,10 +182,6 @@ const style: cytoscape.StylesheetJson = [
     },
   },
   {
-    selector: 'node[kind="site"].weighty',
-    style: { "border-color": "#38d9a9", "border-width": 2 },
-  },
-  {
     selector: "node.active",
     style: {
       "background-color": "#f0b429",
@@ -219,21 +220,33 @@ const style: cytoscape.StylesheetJson = [
   },
 ];
 
+function reconstruct() {
+  if (!cy) return;
+  try {
+    cy.elements().remove();
+    cy.add(buildElements());
+    cy.layout({ name: "preset", fit: true, padding: 72 }).run();
+    updateActive(false);
+    updateTrail();
+  } catch (e) {
+    console.error("图谱渲染失败", e);
+  }
+}
+
 function initGraph() {
   if (!container.value) return;
   cy = cytoscape({
     container: container.value,
-    elements: buildElements(),
+    elements: [],
     style,
-    layout: { name: "preset", fit: true, padding: 72 },
+    layout: { name: "preset" },
     wheelSensitivity: 0.2,
     minZoom: 0.2,
     maxZoom: 3,
   });
 
   cy.on("tap", 'node[kind="site"]', (evt) => {
-    const data = evt.target.data();
-    const id: string = data.id;
+    const id: string = evt.target.data("id");
     const [, world, site] = id.split("::");
     emit("select", { world, site });
   });
@@ -241,8 +254,15 @@ function initGraph() {
     if (evt.target === cy) emit("select", null);
   });
 
-  updateActive(false);
-  updateTrail();
+  reconstruct();
+}
+
+function animateSafely(options: Parameters<Core["animate"]>[0]) {
+  if (!cy) return;
+  const result = cy.animate(options) as unknown;
+  if (result && typeof (result as Promise<unknown>).catch === "function") {
+    (result as Promise<unknown>).catch(() => undefined);
+  }
 }
 
 function updateActive(animate = true) {
@@ -250,12 +270,12 @@ function updateActive(animate = true) {
   const chapter = props.chapters[props.activeIndex];
   if (!chapter) return;
   cy.nodes().removeClass("active");
-  const node = cy.getElementById(siteKey(chapter));
+  const node = cy.getElementById(siteNodeId(chapter));
   if (node.length) {
     node.addClass("active");
     const token = cy.getElementById("token");
     if (token.length) token.position(node.position());
-    if (animate) cy.animate({ center: { eles: node }, zoom: 1.2, duration: 350 });
+    if (animate) animateSafely({ center: { eles: node }, zoom: 1.2, duration: 350 });
   }
   const edge = cy.getElementById(`edge::${props.activeIndex}`);
   if (edge.length) edge.addClass("active");
@@ -275,7 +295,7 @@ function updateTrail() {
   for (const i of indexes) {
     const chapter = props.chapters.find((c) => c.chapter_index === i);
     if (!chapter) continue;
-    const node = cy.getElementById(siteKey(chapter));
+    const node = cy.getElementById(siteNodeId(chapter));
     if (node.length) node.addClass("trail");
   }
 }
@@ -285,7 +305,11 @@ function zoomBy(factor: number) {
   cy.zoom({ level: cy.zoom() * factor, renderedPosition: { x: cy.width() / 2, y: cy.height() / 2 } });
 }
 function fit() {
-  cy?.fit(undefined, 72);
+  try {
+    cy?.fit(undefined, 72);
+  } catch {
+    /* ignore */
+  }
 }
 
 function resize() {
@@ -302,17 +326,7 @@ onBeforeUnmount(() => {
   cy = null;
 });
 
-watch(
-  () => props.chapters,
-  () => {
-    if (!cy) return;
-    cy.elements().remove();
-    cy.add(buildElements());
-    cy.layout({ name: "preset", fit: true, padding: 72 }).run();
-    updateActive(false);
-    updateTrail();
-  },
-);
+watch(() => props.chapters, reconstruct);
 watch(() => props.activeIndex, () => updateActive());
 watch(() => props.highlightEntityId, updateTrail);
 </script>

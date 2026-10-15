@@ -35,7 +35,13 @@ struct ChatChoice {
 
 #[derive(Debug, Deserialize)]
 struct ChatResponseMessage {
-    content: String,
+    #[serde(default)]
+    content: Option<String>,
+    /// 部分推理模型把最终答案放在 reasoning_content / reasoning 字段。
+    #[serde(default)]
+    reasoning_content: Option<String>,
+    #[serde(default)]
+    reasoning: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -219,11 +225,17 @@ pub async fn chat_json(
         .json()
         .await
         .map_err(|e| AppError::Llm(format!("解析 LLM 响应失败: {e}")))?;
-    parsed
-        .choices
-        .into_iter()
-        .next()
-        .map(|c| c.message.content)
+    let message = parsed.choices.into_iter().next().map(|c| c.message);
+    let content = message.map(|m| {
+        let primary = m.content.unwrap_or_default();
+        if primary.trim().is_empty() {
+            m.reasoning_content.or(m.reasoning).unwrap_or_default()
+        } else {
+            primary
+        }
+    });
+    content
+        .filter(|c| !c.trim().is_empty())
         .ok_or_else(|| AppError::Llm("LLM 响应为空".into()))
 }
 

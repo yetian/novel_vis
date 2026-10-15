@@ -1,6 +1,6 @@
 # ChronoSpace Reader · 架构设计蓝图（design.md）
 
-> 当前版本：**v0.1.11**
+> 当前版本：**v0.1.12**
 > 本文档描述系统架构、数据流、SQLite 关系模式、状态机、协议契约与 UI 组件层级，并与代码库保持同步。
 
 ---
@@ -394,6 +394,9 @@ App.vue
 | DRM / HUFF-CDIC | `UNSUPPORTED_FORMAT`，明确提示不支持 |
 | 模型输出非法 JSON | 平衡括号提取 + 本地修复（去注释/尾随逗号、转义裸控制字符）→ 修复提示词重试（≤3） → `JSON_REPAIR_ERROR` |
 | 字符串内裸控制字符 | `escape_control_chars_in_strings` 将 `\n`/`\r`/`\t`/`\u00XX` 转义，修复 `control character found` 错误 |
+| 缺少逗号 | `MISSING_COMMA_RE` 在「值 + 下一个键」之间补逗号，修复 `expected , or }` |
+| 输出被截断 | `balance_braces` 依据未闭合括号补齐 `}` / `]` |
+| 推理模型空 content | 回退读取 `reasoning_content` / `reasoning` |
 | 引擎不支持 `response_format` | 自动降级为不带该字段重试一次 |
 | 引擎不可达 | `LLM_ERROR`，提示启动本地服务 |
 | 抽取中断/取消 | 已完成章节的事务检查点保留，可续跑 |
