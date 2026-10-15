@@ -30,9 +30,9 @@ const MOVEMENT_COLORS: Record<string, string> = {
 };
 
 // 每个世界一块网格，地点按格子排布，世界横向排列。
-const CELL_W = 148;
-const CELL_H = 96;
-const GAP = 150;
+const CELL_W = 200;
+const CELL_H = 124;
+const GAP = 220;
 
 interface Layout {
   positions: Map<string, { x: number; y: number }>;
@@ -129,44 +129,51 @@ function buildElements(): ElementDefinition[] {
   return elements;
 }
 
-const style: cytoscape.StylesheetJson = [
+const style = [
   {
     selector: 'node[kind="world"]',
     style: {
-      "background-color": "rgba(148,163,184,0.03)",
-      "border-color": "#334155",
-      "border-width": 1,
-      "border-style": "dashed",
+      "background-color": "rgba(30,41,59,0.55)",
+      "border-color": "#64748b",
+      "border-width": 1.5,
       shape: "round-rectangle",
       label: "data(label)",
-      color: "#94a3b8",
-      "font-size": 13,
-      "font-weight": 600,
+      color: "#fcd34d",
+      "font-size": 15,
+      "font-weight": 700,
       "text-valign": "top",
       "text-halign": "center",
-      "text-margin-y": -8,
-      "text-outline-width": 2,
+      "text-margin-y": -12,
+      "text-outline-width": 3,
       "text-outline-color": "#0b0e14",
-      padding: "26px",
+      padding: "32px",
     },
   },
   {
     selector: 'node[kind="site"]',
     style: {
       shape: "round-rectangle",
-      "background-color": "rgba(32,201,151,0.10)",
-      "border-color": "#2f7d68",
-      "border-width": 1,
-      width: 104,
-      height: 34,
+      "background-fill": "linear-gradient",
+      "background-gradient-direction": "to-bottom-right",
+      "background-gradient-stop-colors": "#1b6153 #0d332b",
+      "border-color": "#3ddc97",
+      "border-width": 1.5,
+      width: 128,
+      height: 46,
       label: "data(label)",
-      color: "#c9e8de",
-      "font-size": 10,
+      color: "#f2fffb",
+      "font-size": 11,
+      "font-weight": 600,
       "text-valign": "center",
       "text-halign": "center",
       "text-wrap": "wrap",
-      "text-max-width": "92px",
-      "text-outline-width": 0,
+      "text-max-width": "112px",
+      "text-outline-width": 2,
+      "text-outline-color": "#06231c",
+      "shadow-blur": 18,
+      "shadow-color": "#000000",
+      "shadow-opacity": 0.5,
+      "shadow-offset-y": 4,
     },
   },
   {
@@ -176,49 +183,54 @@ const style: cytoscape.StylesheetJson = [
       "line-color": "data(color)",
       "target-arrow-color": "data(color)",
       "target-arrow-shape": "triangle",
-      "arrow-scale": 0.8,
-      width: 1.4,
-      opacity: 0.5,
+      "arrow-scale": 0.9,
+      width: 1.8,
+      opacity: 0.65,
     },
+  },
+  {
+    selector: 'edge[movement="STAY"]',
+    style: { opacity: 0.22, width: 1.2 },
   },
   {
     selector: "node.active",
     style: {
+      "background-fill": "solid",
       "background-color": "#f0b429",
-      "background-opacity": 1,
       "border-color": "#ffffff",
-      "border-width": 2,
-      color: "#0b0e14",
+      "border-width": 3,
+      color: "#241a00",
+      "text-outline-width": 0,
       "z-index": 90,
     },
   },
   {
     selector: "node.trail",
-    style: { "border-color": "#f0b429", "border-width": 2, "z-index": 80 },
+    style: { "border-color": "#f0b429", "border-width": 3, "z-index": 80 },
   },
   {
     selector: 'node[kind="token"]',
     style: {
-      "background-color": "#f03e3e",
+      "background-color": "#ff2d55",
       shape: "star",
-      width: 30,
-      height: 30,
+      width: 34,
+      height: 34,
       label: "data(label)",
-      color: "#ff8787",
-      "font-size": 10,
+      color: "#ffd6dd",
+      "font-size": 11,
       "font-weight": 700,
       "text-valign": "center",
-      "text-margin-y": -24,
-      "text-outline-width": 2,
+      "text-margin-y": -26,
+      "text-outline-width": 3,
       "text-outline-color": "#0b0e14",
       "z-index": 100,
     },
   },
   {
     selector: "edge.active",
-    style: { "line-color": "#f0b429", "target-arrow-color": "#f0b429", width: 2.6, opacity: 1, "z-index": 70 },
+    style: { "line-color": "#f0b429", "target-arrow-color": "#f0b429", width: 3, opacity: 1, "z-index": 70 },
   },
-];
+] as unknown as cytoscape.StylesheetJson;
 
 function reconstruct() {
   if (!cy) return;
@@ -344,9 +356,9 @@ watch(() => props.highlightEntityId, updateTrail);
     <div class="pointer-events-none absolute left-3 top-3 rounded-lg border border-ink-600/50 bg-ink-800/60 px-3 py-2 text-[11px] text-slate-400 backdrop-blur">
       <div class="mb-1 font-medium text-slate-300">空间图谱 <span class="text-slate-500">· 点击地点查看详情</span></div>
       <div class="flex flex-wrap gap-x-3 gap-y-1">
-        <span><span class="mr-1 inline-block h-2 w-2 rounded-sm" style="background:rgba(32,201,151,.5)" />地点</span>
+        <span><span class="mr-1 inline-block h-2 w-2 rounded-sm" style="background:#3ddc97" />地点</span>
         <span><span class="mr-1 inline-block h-2 w-2 rounded-full" style="background:#f0b429" />当前</span>
-        <span><span class="mr-1 inline-block h-2 w-2 rounded-full" style="background:#f03e3e" />主角</span>
+        <span><span class="mr-1 inline-block h-2 w-2 rounded-full" style="background:#ff2d55" />主角</span>
         <span><span class="mr-1 inline-block h-0.5 w-3 align-middle" style="background:#b197fc" />传送</span>
         <span><span class="mr-1 inline-block h-0.5 w-3 align-middle" style="background:#f0b429" />飞升</span>
       </div>

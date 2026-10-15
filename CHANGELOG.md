@@ -3,6 +3,11 @@
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/) 与 [Conventional Commits](https://www.conventionalcommits.org/zh-hans/)。
 每个有意义的功能实现或修复均递增 PATCH 版本。
 
+## [0.1.13] - fix(ui)
+
+- 提升空间图可读性：地点卡片改为高对比深色渐变填充 + 亮色描边 + 浅色加粗文字（带描边），世界面板加实线边框与金色标题；节点加入投影。
+- 加大横向/纵向间距（CELL 200×124，世界间隔 220），STAY 边淡化（opacity 0.22）凸显移动边；图例配色同步。
+
 ## [0.1.12] - fix(llm)
 
 - JSON 修复增强：补全缺失逗号（`expected , or }`）、补齐被截断的闭合括号；解析前去除 BOM。
