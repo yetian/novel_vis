@@ -27,6 +27,7 @@ export const api = {
   listBooks: () => guard(() => invoke<BookRow[]>("list_books")),
   getTimeline: (bookId: number) => guard(() => invoke<TimelineBundle>("get_timeline", { bookId })),
   deleteBook: (bookId: number) => guard(() => invoke<void>("delete_book", { bookId })),
+  clearAllData: () => guard(() => invoke<void>("clear_all_data")),
   saveLlmConfig: (config: LlmConfig) => guard(() => invoke<void>("save_llm_config", { config })),
   getLlmConfig: () => guard(() => invoke<LlmConfig | null>("get_llm_config")),
   listModels: (config: LlmConfig) => guard(() => invoke<ModelInfo[]>("list_models", { config })),

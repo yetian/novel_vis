@@ -1,11 +1,34 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
 import { useLlmStore } from "@/stores/llm";
+import { useLibraryStore } from "@/stores/library";
+import { useUiStore } from "@/stores/ui";
 import { api, isTauri } from "@/api/tauri";
 import { ENGINE_PRESETS, MODEL_CHIPS, type EngineKind } from "@/types/schema";
 
 const llm = useLlmStore();
+const library = useLibraryStore();
+const ui = useUiStore();
 const dataDir = ref("");
+
+async function clearAllData() {
+  const ok = await ui.askConfirm({
+    title: "清空全部数据",
+    message: "确认删除所有书籍与抽取结果？此操作不可恢复，需重新导入并抽取。",
+    confirmLabel: "清空",
+    danger: true,
+  });
+  if (!ok) return;
+  try {
+    await api.clearAllData();
+    await library.refresh();
+    library.activeBookId = null;
+    library.timeline = null;
+    ui.toast("已清空全部数据", "success");
+  } catch (e) {
+    ui.toast(`清空失败：${String(e)}`, "error");
+  }
+}
 
 const engines: { key: EngineKind; icon: string; hint: string }[] = [
   { key: "lm_studio", icon: "fa-desktop", hint: "默认 http://localhost:1234/v1" },
@@ -156,6 +179,9 @@ onMounted(() => {
         <p class="mt-2 leading-relaxed text-slate-500">
           SQLite 数据库（chronospace.sqlite3）与引擎配置（llm_config.json）保存在此用户目录下。原始小说文件不会被复制、移动或修改。
         </p>
+        <button class="btn-danger mt-3" @click="clearAllData">
+          <i class="fa-solid fa-broom" />清空全部数据
+        </button>
       </section>
 
       <section class="panel p-5 text-xs leading-relaxed text-slate-400">

@@ -1,6 +1,6 @@
 # ChronoSpace Reader · 架构设计蓝图（design.md）
 
-> 当前版本：**v0.1.10**
+> 当前版本：**v0.1.11**
 > 本文档描述系统架构、数据流、SQLite 关系模式、状态机、协议契约与 UI 组件层级，并与代码库保持同步。
 
 ---
@@ -236,6 +236,8 @@ erDiagram
 
 **视角归一化**：系统提示词要求判断 `first_person` / `third_person`；第一人称时把「我」解析为主角规范名，无法确定则使用 `PROTAGONIST_FIRST_PERSON` 并在 `description` 注明别名。
 
+**题材无关与抗幻觉**：提示词不预设作品类型、不包含任何示例专有名词（避免小模型照搬示例造成「奇怪的人」）；`world` 允许现实语境（城市/年代/现实世界），不强制“界”类术语。抽取后由 `ground_entries` 按当前分块正文校验：人物/物品名若非本段正文子串则丢弃（`PROTAGONIST_FIRST_PERSON` 与单字名豁免），过滤数量通过日志事件上报。
+
 ---
 
 ### 5.1 中文与编码处理
@@ -285,6 +287,7 @@ sequenceDiagram
 | `list_books` | — | `BookRow[]` | 书库列表（含抽取进度） |
 | `get_timeline` | `bookId: number` | `TimelineBundle` | 画布聚合数据 |
 | `delete_book` | `bookId: number` | `void` | 级联删除 |
+| `clear_all_data` | — | `void` | 清空全部书籍与抽取数据（含内存缓存） |
 | `save_llm_config` | `config: LlmConfig` | `void` | 写入状态与磁盘 |
 | `get_llm_config` | — | `LlmConfig \| null` | 读取配置 |
 | `list_models` | `config: LlmConfig` | `ModelInfo[]` | `/v1/models`（Ollama 回退 `/api/tags`） |

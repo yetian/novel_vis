@@ -216,7 +216,15 @@ async fn extract_chunk(
         };
 
         match parse_extraction(&response) {
-            Ok((ext, locally_repaired)) => {
+            Ok((mut ext, locally_repaired)) => {
+                let dropped = ground_entries(&mut ext, text);
+                if dropped > 0 {
+                    emit_log(
+                        app,
+                        book_id,
+                        &format!("第 {} 章：已过滤 {} 个未在正文出现的实体", chapter.chapter_index + 1, dropped),
+                    );
+                }
                 return Ok((ext, retries, locally_repaired || attempt > 0));
             }
             Err(e) => {
@@ -495,10 +503,12 @@ fn emit_log(app: &AppHandle, book_id: i64, message: &str) {
 /// 系统提示词：约束模型输出严格的时空/人物/因果 JSON。
 pub const SYSTEM_PROMPT: &str = r#"你是一个中文小说叙事结构分析引擎。你的唯一任务是把输入的小说正文分块，抽取其中的【时间】【空间】【人物】【物品/功法/传承】【因果】信息，并严格输出一个 JSON 对象。
 
+重要：本引擎适用于【任意题材】的小说（现实、都市、历史、战争、科幻、武侠、玄幻等皆可）。不要预设作品类型，不要照搬任何示例或记忆中的其它作品内容；一切以【本段正文】为准。
+
 ## 叙事视角归一化
-- 判断本段是 first_person（第一人称，如“我拔出长剑”）还是 third_person（第三人称，如“韩立飞身而起”）。
-- 若为第一人称，把“我”解析为主角的规范名称；若无法确定主角名称，则使用固定标识 "PROTAGONIST_FIRST_PERSON"，并在人物 description 中给出该视角下的上下文别名/称谓。
-- 人物 name 一律使用全书中最规范、最常出现的称谓（如“韩立”“墨大夫”），不要使用“他”“那人”等代词。
+- 判断本段是 first_person（第一人称，如“我拔出长剑”）还是 third_person（第三人称，如“他推门而入”）。
+- 若为第一人称，把“我”解析为主角的规范名称；若无法确定主角名称，则使用固定标识 "PROTAGONIST_FIRST_PERSON"，并在该人物的 description 中给出此视角下的称谓。
+- 人物 name 使用本段正文中最规范、最常出现的称谓，不要使用“他”“那人”等代词。
 
 ## 输出 JSON Schema（字段必须齐全，枚举值必须完全一致）
 {
@@ -507,35 +517,66 @@ pub const SYSTEM_PROMPT: &str = r#"你是一个中文小说叙事结构分析引
   "narrative_perspective": "first_person" | "third_person",
   "temporal": {
     "type": "CONTINUOUS" | "JUMP_FORWARD" | "FLASHBACK" | "UNCERTAIN",
-    "raw_marker": "原文时间标记，如 三年后 / 眨眼数日",
+    "raw_marker": "原文中的时间标记；无则空字符串",
     "relative_delta_days": 整数（换算为天数，无则 0）,
-    "reference_anchor": "所参照的上一事件描述"
+    "reference_anchor": "所参照的上一事件描述；无则空字符串"
   },
   "spatial": {
-    "world": "世界层级，如 人界 / 灵界",
-    "region": "大区，如 越国",
-    "site": "具体地点，如 神手谷",
+    "world": "世界 / 时代 / 位面层级。现实题材填现实语境（如 现实世界 / 某城市 / 某年代），仅当原文确有玄幻或位面设定时才用相应称谓；不确定则空字符串",
+    "region": "行政区 / 国度 / 大区等；无则空字符串",
+    "site": "具体地点，如 某房间 / 某街道 / 某山谷；无则空字符串",
     "movement_type": "STAY" | "LOCAL_MOVE" | "TELEPORT" | "ASCENSION" | "DUNGEON_ENTER" | "DUNGEON_EXIT",
-    "source_site": "若发生移动，填写移动起点，否则为空字符串"
+    "source_site": "若发生移动，填写移动起点，否则空字符串"
   },
   "characters": [
-    { "name": "人物规范名", "action": "FIRST_APPEARANCE" | "ACTIVE" | "DEPARTURE" | "DEATH", "role": "师尊/对手/同伴等", "description": "外貌或身份描述" }
+    { "name": "人物规范名", "action": "FIRST_APPEARANCE" | "ACTIVE" | "DEPARTURE" | "DEATH", "role": "该人物在本段中的身份/关系；无则空字符串", "description": "外貌或身份描述；无则空字符串" }
   ],
   "items_and_skills": [
-    { "name": "物品或功法名", "category": "ITEM" | "SKILL" | "LEGACY", "acquired_from": { "spatial": "获得地点", "temporal": "获得时间" }, "usage_in_chapter": "本章中的用途", "future_hook_flag": true 或 false }
+    { "name": "物品 / 功法 / 传承名", "category": "ITEM" | "SKILL" | "LEGACY", "acquired_from": { "spatial": "获得地点", "temporal": "获得时间" }, "usage_in_chapter": "本段中的用途", "future_hook_flag": true 或 false }
   ],
   "plot_summary": "一句话核心剧情摘要"
 }
 
 ## 硬性要求
 1. 只输出 JSON，对象之外不得有任何文字、注释或 Markdown 代码块。
-2. 所有字符串用双引号；不要出现尾随逗号。
-3. 无法确定的信息使用空字符串或 0，不要省略字段。
-4. 《凡人修仙传》等修仙小说的世界层级请合理区分（如 人界 / 灵界 / 仙界）。
-5. 物品若具有长期伏笔价值（如“掌天瓶”），future_hook_flag 设为 true。
-6. 所有自然语言字段（人物名、地点、角色、描述、用途、摘要、raw_marker、reference_anchor 等）一律使用【简体中文】输出；仅 JSON 的键名与机器枚举值（如 CONTINUOUS / FIRST_APPEARANCE / ITEM）保持英文。
-7. 专有名词保留原作写法，不要翻译或音译（如“韩立”“掌天瓶”“越国”“神手谷”）。
+2. 所有字符串用双引号；不要出现尾随逗号；字符串内不要出现未转义的换行或制表符。
+3. 严禁捏造：只输出【本段正文中确凿出现】的人物、地点、物品与事件；不要用任何示例或记忆中的其它作品内容填补。无法确定时使用空字符串 / 空数组 / 0。
+4. movement_type 仅在原文明确发生移动时使用非 STAY；普通场景使用 STAY。
+5. world 不要强行套用“界”之类的词，贴合原文语境即可。
+6. 所有自然语言字段（人物名、地点、角色、描述、用途、摘要、raw_marker、reference_anchor 等）使用【简体中文】输出；仅 JSON 的键名与机器枚举值（如 CONTINUOUS / FIRST_APPEARANCE / ITEM）保持英文。
+7. 专有名词保留原文写法，不要翻译或音译。
 "#;
+
+/// 过滤掉未在本段正文中出现的实体，抑制模型幻觉（例如照搬示例或其它作品的人名）。
+/// 返回被过滤的条目数量。单字名称跳过校验以避免误删。
+fn ground_entries(ext: &mut SegmentExtraction, text: &str) -> usize {
+    let mut dropped = 0;
+    ext.characters.retain(|c| {
+        if c.name == "PROTAGONIST_FIRST_PERSON" || is_grounded(&c.name, text) {
+            true
+        } else {
+            dropped += 1;
+            false
+        }
+    });
+    ext.items_and_skills.retain(|i| {
+        if is_grounded(&i.name, text) {
+            true
+        } else {
+            dropped += 1;
+            false
+        }
+    });
+    dropped
+}
+
+fn is_grounded(name: &str, text: &str) -> bool {
+    let n = name.trim();
+    if n.chars().count() < 2 {
+        return true;
+    }
+    text.contains(n)
+}
 
 #[cfg(test)]
 mod tests {
@@ -635,6 +676,29 @@ mod tests {
         assert!(repaired);
         assert!(ext.plot_summary.contains("第一行"));
         assert!(ext.plot_summary.contains("第二行"));
+    }
+
+    #[test]
+    fn ground_entries_drops_hallucinated_names() {
+        let mut ext: SegmentExtraction = serde_json::from_value(json!({
+            "characters": [
+                {"name": "韩立", "action": "ACTIVE"},
+                {"name": "张三", "action": "ACTIVE"},
+                {"name": "PROTAGONIST_FIRST_PERSON", "action": "ACTIVE"}
+            ],
+            "items_and_skills": [
+                {"name": "掌天瓶", "category": "ITEM"},
+                {"name": "不存在的法宝", "category": "ITEM"}
+            ]
+        }))
+        .unwrap();
+        let text = "韩立走进屋子，抬眼看了看掌天瓶。";
+        let dropped = ground_entries(&mut ext, text);
+        assert_eq!(dropped, 2);
+        assert_eq!(ext.characters.len(), 2);
+        assert!(ext.characters.iter().any(|c| c.name == "PROTAGONIST_FIRST_PERSON"));
+        assert_eq!(ext.items_and_skills.len(), 1);
+        assert_eq!(ext.items_and_skills[0].name, "掌天瓶");
     }
 
     #[test]

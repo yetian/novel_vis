@@ -3,6 +3,12 @@
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/) 与 [Conventional Commits](https://www.conventionalcommits.org/zh-hans/)。
 每个有意义的功能实现或修复均递增 PATCH 版本。
 
+## [0.1.11] - fix(llm)
+
+- 提示词题材无关化：移除所有示例专有名词（避免小模型照搬“韩立/掌天瓶/人界”等造成污染），明确 `world` 可为现实语境，不强制“界”类术语。
+- 抗幻觉实体校验：`ground_entries` 按当前分块正文过滤未出现的人物/物品（`PROTAGONIST_FIRST_PERSON` 与单字名豁免），过滤数经日志上报。
+- 新增 `clear_all_data` 命令与设置页「清空全部数据」（带确认），便于清除被污染数据。
+
 ## [0.1.10] - fix(llm)
 
 - 修复抽取失败：JSON 修复新增「字符串内裸控制字符转义」（解决 `control character found while parsing a string`），并将 JSON 提取改为平衡括号扫描（容忍数组包裹与尾随文本）。

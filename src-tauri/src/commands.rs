@@ -92,6 +92,14 @@ pub fn delete_book(state: State<'_, AppState>, book_id: i64) -> AppResult<()> {
     state.db.delete_book(book_id)
 }
 
+/// 清空全部书籍与抽取数据（含内存缓存），用于清除被污染的数据。
+#[tauri::command]
+pub fn clear_all_data(state: State<'_, AppState>) -> AppResult<()> {
+    state.db.delete_all()?;
+    state.books.lock().clear();
+    Ok(())
+}
+
 /// 保存 LLM 引擎配置（LM Studio / Ollama / 自定义）到状态与磁盘。
 #[tauri::command]
 pub fn save_llm_config(state: State<'_, AppState>, config: LlmConfig) -> AppResult<()> {

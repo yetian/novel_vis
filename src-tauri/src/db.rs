@@ -387,6 +387,21 @@ impl Db {
         Ok(())
     }
 
+    /// 清空全部数据（用于清除被污染或测试导入的数据）。按子表 → 父表顺序删除。
+    pub fn delete_all(&self) -> AppResult<()> {
+        let conn = self.conn.lock();
+        conn.execute_batch(
+            "DELETE FROM entity_events;
+             DELETE FROM entities;
+             DELETE FROM spatiotemporal_nodes;
+             DELETE FROM chapters;
+             DELETE FROM books;
+             DELETE FROM sqlite_sequence;",
+        )
+        .ok();
+        Ok(())
+    }
+
     pub fn get_chapters(&self, book_id: i64) -> AppResult<Vec<ChapterRow>> {
         let conn = self.conn.lock();
         let mut stmt = conn.prepare(
