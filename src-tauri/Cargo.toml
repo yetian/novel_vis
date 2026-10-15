@@ -1,6 +1,6 @@
 [package]
 name = "chronospace-reader"
-version = "0.1.15"
+version = "0.1.16"
 description = "ChronoSpace Reader (时空编年史) - spatiotemporal narrative extraction studio"
 authors = ["ChronoSpace Team"]
 edition = "2021"

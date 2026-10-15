@@ -22,7 +22,9 @@ export const useLlmStore = defineStore("llm", {
   state: () => ({
     config: defaultConfig(),
     models: [] as ModelInfo[],
+    loadedModels: [] as string[],
     loading: false,
+    activatedModel: "" as string,
     connected: false,
     lastError: "" as string,
   }),
@@ -69,6 +71,7 @@ export const useLlmStore = defineStore("llm", {
         const models = await api.listModels(this.config);
         this.models = models;
         this.connected = true;
+        this.refreshLoaded().catch(() => undefined);
         if (!models.some((m) => m.id === this.config.model) && models.length) {
           this.config.model = models[0].id;
         }
@@ -77,6 +80,29 @@ export const useLlmStore = defineStore("llm", {
         this.connected = false;
         this.lastError = errText(e);
         ui.toast(`无法获取模型列表：${errText(e)}`, "error");
+      } finally {
+        this.loading = false;
+      }
+    },
+    async refreshLoaded() {
+      try {
+        const loaded = await api.listLoadedModels(this.config);
+        this.loadedModels = loaded.map((m) => m.id);
+      } catch {
+        this.loadedModels = [];
+      }
+    },
+    /// 切换/激活当前模型：卸载旧模型并预热加载新模型。
+    async activate() {
+      const ui = useUiStore();
+      this.loading = true;
+      try {
+        const message = await api.activateModel(this.config);
+        this.activatedModel = this.config.model;
+        await this.refreshLoaded();
+        ui.toast(message, "success");
+      } catch (e) {
+        ui.toast(`模型激活失败：${errText(e)}`, "error");
       } finally {
         this.loading = false;
       }

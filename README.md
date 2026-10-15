@@ -1,6 +1,6 @@
 # 时空编年史 · ChronoSpace Reader
 
-> 当前版本：**v0.1.15**
+> 当前版本：**v0.1.16**
 
 **ChronoSpace Reader（时空编年史）** 是一款跨平台桌面应用，使用 **Tauri 2.0（Rust）+ Vue 3（Vite / Pinia / TypeScript / TailwindCSS）** 构建。
 它把 EPUB / MOBI / AZW3 电子书**在内存中**解析分章，借助**本地大模型**（LM Studio 或 Ollama，OpenAI 兼容 API）抽取**时间、空间、人物、物品/功法与因果**结构，持久化到本地 SQLite，并以**交互式时空图谱**呈现，一键导出可部署到 GitHub Pages 的**零依赖单页 HTML**。
@@ -16,7 +16,8 @@
 - **中文友好**：面向中文小说设计。解析层支持 **UTF-8 / GBK / GB18030 / Big5**（含 BOM 检测与「把 GBK 误标为 windows-1252」的启发式纠正）；LLM 提示词要求所有自然语言字段输出**简体中文**，仅 JSON 键名与枚举值（如 `CONTINUOUS`、`ITEM`）保持英文；界面与导出页使用中文无衬线字体栈（Noto Sans SC / 苹方 / 微软雅黑）。
 - **本地大模型抽取**：
   - 双引擎支持：**LM Studio**（`http://localhost:1234/v1`）与 **Ollama**（`http://localhost:11434/v1`），亦可接入任意 OpenAI 兼容端点。
-  - 自动探测模型列表 `/v1/models`（Ollama 回退 `/api/tags`），内置 `qwen2.5-0.5b / 1.5b / 3b`、`gemma-2-2b` 等快速选择芯片。
+  - 自动探测模型列表 `/v1/models`（Ollama 回退 `/api/tags`），内置 `qwen2.5-0.5b / 1.5b / 3b`、`gemma-2-2b` 等快速选择芯片；显示引擎中**已加载**的模型。
+  - **模型切换**：切换模型时尽力卸载旧模型并预热加载新模型（Ollama 用 `keep_alive:0` 卸载 + `keep_alive:10m` 预热；LM Studio 用极小请求触发即时加载）；抽取前自动确保目标模型已激活。显卡分配属引擎侧设置（见「引擎设置」的多 GPU 说明）。
   - 强制 JSON 输出（`response_format: { type: "json_object" }`），温度默认 `0.1`。
 - **叙事视角归一化**：同时支持第一/第三人称，自动将「我」解析为主角规范名或 `PROTAGONIST_FIRST_PERSON`。
 - **题材无关 & 抗幻觉**：提示词不预设题材（现实/都市/历史/科幻/武侠/玄幻皆可）、不带任何示例人名地名；模型输出后按正文**校验实体**，剔除未在原文出现的条目，避免污染数据库。

@@ -51,6 +51,8 @@ pub struct AppState {
     pub books: Mutex<HashMap<i64, Arc<ParsedBook>>>,
     pub jobs: Mutex<HashMap<i64, Arc<JobControl>>>,
     pub llm: Mutex<Option<crate::models::LlmConfig>>,
+    /// 当前已在引擎中激活（加载）的模型名，用于切换时卸载旧模型。
+    pub active_model: Mutex<Option<String>>,
 }
 
 impl AppState {
@@ -60,6 +62,7 @@ impl AppState {
             books: Mutex::new(HashMap::new()),
             jobs: Mutex::new(HashMap::new()),
             llm: Mutex::new(None),
+            active_model: Mutex::new(None),
         }
     }
 

@@ -39,6 +39,7 @@ const engines: { key: EngineKind; icon: string; hint: string }[] = [
 
 onMounted(() => {
   if (!llm.models.length) llm.fetchModels().catch(() => undefined);
+  llm.refreshLoaded().catch(() => undefined);
   if (isTauri) api.getDataDir().then((dir) => (dataDir.value = dir)).catch(() => undefined);
 });
 </script>
@@ -111,12 +112,28 @@ onMounted(() => {
 
         <div class="mt-3">
           <select v-if="llm.models.length" v-model="llm.config.model" class="input">
-            <option v-for="m in llm.models" :key="m.id" :value="m.id">{{ m.id }}</option>
+            <option v-for="m in llm.models" :key="m.id" :value="m.id">
+              {{ m.id }}{{ llm.loadedModels.includes(m.id) ? "  ✓ 已加载" : "" }}
+            </option>
           </select>
           <input v-else v-model="llm.config.model" class="input" placeholder="例如 qwen2.5-1.5b-instruct" />
+
+          <div class="mt-2 flex flex-wrap items-center gap-2">
+            <button class="btn-ghost !py-1.5" :disabled="llm.loading" @click="llm.activate()">
+              <i class="fa-solid fa-power-off" />应用 / 切换模型
+            </button>
+            <button class="btn-ghost !py-1.5" :disabled="llm.loading" @click="llm.refreshLoaded()">
+              <i class="fa-solid fa-rotate" />刷新已加载
+            </button>
+            <span v-if="llm.loadedModels.length" class="text-[11px] text-jade-400">
+              <i class="fa-solid fa-circle-check mr-1" />已加载：{{ llm.loadedModels.join("、") }}
+            </span>
+            <span v-else class="text-[11px] text-slate-500">未检测到常驻模型</span>
+          </div>
+
           <p class="mt-2 text-[11px] text-slate-500">
             <i class="fa-solid fa-circle-info mr-1" />
-            推荐小模型：Qwen2.5 (0.5B/1.5B/3B) 或 Gemma (1B/2B-IT)，兼顾抽取质量与本地速度。
+            切换模型时应用会尽力卸载旧模型并预热加载新模型；抽取开始前也会自动确保目标模型已激活。
           </p>
         </div>
 
@@ -188,7 +205,15 @@ onMounted(() => {
       <section class="panel p-5 text-xs leading-relaxed text-slate-400">
         <h4 class="mb-2 text-sm font-semibold text-slate-200">本地引擎快速上手</h4>
         <p><strong class="text-jade-400">LM Studio：</strong>加载模型后，在 "Local Server" 标签页启动服务（默认端口 1234），地址填 <code>http://localhost:1234/v1</code>。</p>
-        <p class="mt-1"><strong class="text-jade-400">Ollama：</strong>执行 <code>ollama pull qwen2.5:1.5b</code> 与 <code>ollama serve</code>，地址填 <code>http://localhost:11434/v1</code>（应用会自动回退到 <code>/api/tags</code> 列出模型）。</p>
+        <p class="mt-1"><strong class="text-jade-400">Ollama：</strong>执行 <code>ollama pull qwen2.5:1.5b</code> 与 <code>ollama serve</code>，地址填 <code>http://localhost:11434/v1</code>（应用会自动回退到 <code>/api/tags</code> 列出模型，并通过 <code>/api/ps</code> 显示已加载模型）。</p>
+      </section>
+
+      <section class="panel p-5 text-xs leading-relaxed text-slate-400">
+        <h4 class="mb-2 text-sm font-semibold text-slate-200"><i class="fa-solid fa-microchip mr-1 text-gold-400" />多 GPU / 显卡选择</h4>
+        <p>模型的加载与显卡分配由**推理引擎**决定，应用无法直接指定 GPU。请按引擎方式配置：</p>
+        <p class="mt-1"><strong class="text-jade-400">LM Studio：</strong>在每个模型的「加载设置 / GPU Offload」中选择目标 GPU；或在启动 LM Studio 前设置 <code>CUDA_VISIBLE_DEVICES=0</code>（仅暴露快速卡）。</p>
+        <p class="mt-1"><strong class="text-jade-400">Ollama：</strong>关闭服务后设置 <code>CUDA_VISIBLE_DEVICES</code>（NVIDIA）/ <code>ROCR_VISIBLE_DEVICES</code>（AMD）后重启 <code>ollama serve</code>，使模型只落在指定 GPU。</p>
+        <p class="mt-1">调整可见设备后，回到本页点击「应用 / 切换模型」重新加载即可。切换模型时，应用会请求卸载旧模型以释放显存。</p>
       </section>
     </div>
   </div>

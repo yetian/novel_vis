@@ -3,6 +3,11 @@
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/) 与 [Conventional Commits](https://www.conventionalcommits.org/zh-hans/)。
 每个有意义的功能实现或修复均递增 PATCH 版本。
 
+## [0.1.16] - feat(llm)
+
+- 模型切换：新增 `activate_model`（卸载旧模型 + 预热加载新模型）与 `list_loaded_models`（Ollama `/api/ps`、LM Studio `/api/v0/models`）；`start_extraction` 前自动激活目标模型，`AppState.active_model` 记录当前激活模型。
+- 设置页显示已加载模型、新增「应用 / 切换模型」「刷新已加载」按钮，并补充**多 GPU / 显卡选择**说明（显卡分配属引擎侧设置）。
+
 ## [0.1.15] - feat(ui)
 
 - 新增「人物关系」标签页 `RelationGraph.vue`：人物为节点（按出场次数缩放）、同章共现为连线（线宽=共现次数），点击高亮关系网与出场章节。

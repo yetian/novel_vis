@@ -38,6 +38,8 @@ pub fn run() {
             commands::save_llm_config,
             commands::get_llm_config,
             commands::list_models,
+            commands::list_loaded_models,
+            commands::activate_model,
             commands::test_connection,
             commands::start_extraction,
             commands::pause_extraction,

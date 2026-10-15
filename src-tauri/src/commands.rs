@@ -168,7 +168,26 @@ fn ensure_book_loaded(state: &AppState, book_id: i64) -> AppResult<()> {
     Ok(())
 }
 
+/// 查询引擎中当前已加载的模型。
+#[tauri::command]
+pub async fn list_loaded_models(config: LlmConfig) -> AppResult<Vec<ModelInfo>> {
+    llm::list_loaded_models(&config).await
+}
+
+/// 切换/激活模型：卸载旧模型并预热加载新模型（尽力而为）。
+#[tauri::command]
+pub async fn activate_model(
+    state: State<'_, AppState>,
+    config: LlmConfig,
+) -> AppResult<String> {
+    let previous = state.active_model.lock().clone();
+    let message = llm::activate_model(&config, previous.as_deref()).await?;
+    *state.active_model.lock() = Some(config.model.clone());
+    Ok(message)
+}
+
 /// 启动批量抽取。若原文不在内存中，会尝试按记录的源文件路径重新加载。
+/// 抽取前会确保目标模型已激活（切换模型时卸载旧模型）。
 #[tauri::command]
 pub async fn start_extraction(
     app: AppHandle,
@@ -176,6 +195,13 @@ pub async fn start_extraction(
     request: pipeline::ExtractionRequest,
 ) -> AppResult<Vec<ChapterExtractionResult>> {
     ensure_book_loaded(&state, request.book_id)?;
+
+    let previous = state.active_model.lock().clone();
+    if previous.as_deref() != Some(request.llm.model.as_str()) {
+        llm::activate_model(&request.llm, previous.as_deref()).await.ok();
+        *state.active_model.lock() = Some(request.llm.model.clone());
+    }
+
     pipeline::run_extraction(app, &state, request).await
 }
 

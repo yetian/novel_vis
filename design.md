@@ -1,6 +1,6 @@
 # ChronoSpace Reader · 架构设计蓝图（design.md）
 
-> 当前版本：**v0.1.15**
+> 当前版本：**v0.1.16**
 > 本文档描述系统架构、数据流、SQLite 关系模式、状态机、协议契约与 UI 组件层级，并与代码库保持同步。
 
 ---
@@ -295,6 +295,8 @@ sequenceDiagram
 | `save_llm_config` | `config: LlmConfig` | `void` | 写入状态与磁盘 |
 | `get_llm_config` | — | `LlmConfig \| null` | 读取配置 |
 | `list_models` | `config: LlmConfig` | `ModelInfo[]` | `/v1/models`（Ollama 回退 `/api/tags`） |
+| `list_loaded_models` | `config: LlmConfig` | `ModelInfo[]` | 引擎中已加载模型（Ollama `/api/ps`、LM Studio `/api/v0/models`） |
+| `activate_model` | `config: LlmConfig` | `string` | 卸载旧模型并预热加载当前模型（尽力而为），返回状态说明 |
 | `test_connection` | `config: LlmConfig` | `boolean` | 连通性探测 |
 | `start_extraction` | `request: ExtractionRequest` | `ChapterExtractionResult[]` | 批量抽取 |
 | `pause_extraction` / `resume_extraction` / `cancel_extraction` | `bookId: number` | `void` | 任务控制 |

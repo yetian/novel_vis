@@ -245,6 +245,137 @@ pub async fn health_check(config: &LlmConfig) -> AppResult<bool> {
     Ok(!models.is_empty() || config.model.is_empty())
 }
 
+fn ollama_root(base: &str) -> String {
+    base.trim_end_matches('/').trim_end_matches("/v1").to_string()
+}
+
+/// 查询引擎当前“已加载/常驻”的模型（尽力而为，失败返回空）。
+pub async fn list_loaded_models(config: &LlmConfig) -> AppResult<Vec<ModelInfo>> {
+    let client = build_client(config)?;
+    match config.engine {
+        EngineKind::Ollama => {
+            let url = endpoint(&ollama_root(&config.base_url), "api/ps");
+            let resp = match client.get(&url).send().await {
+                Ok(r) if r.status().is_success() => r,
+                _ => return Ok(Vec::new()),
+            };
+            #[derive(Deserialize)]
+            struct Ps {
+                #[serde(default)]
+                models: Vec<PsModel>,
+            }
+            #[derive(Deserialize)]
+            struct PsModel {
+                name: String,
+            }
+            let parsed: Ps = resp.json().await.unwrap_or(Ps { models: vec![] });
+            Ok(parsed
+                .models
+                .into_iter()
+                .map(|m| ModelInfo {
+                    id: m.name,
+                    owned_by: Some("loaded".into()),
+                })
+                .collect())
+        }
+        _ => {
+            // LM Studio 原生接口：/api/v0/models（若不可用则返回空）。
+            let url = endpoint(
+                config.base_url.trim_end_matches('/').trim_end_matches("/v1"),
+                "api/v0/models",
+            );
+            let resp = match client.get(&url).send().await {
+                Ok(r) if r.status().is_success() => r,
+                _ => return Ok(Vec::new()),
+            };
+            #[derive(Deserialize)]
+            struct V0 {
+                #[serde(default)]
+                data: Vec<V0Model>,
+            }
+            #[derive(Deserialize)]
+            struct V0Model {
+                id: String,
+                #[serde(default)]
+                state: Option<String>,
+            }
+            let parsed: V0 = resp.json().await.unwrap_or(V0 { data: vec![] });
+            Ok(parsed
+                .data
+                .into_iter()
+                .filter(|m| m.state.as_deref() == Some("loaded"))
+                .map(|m| ModelInfo {
+                    id: m.id,
+                    owned_by: Some("loaded".into()),
+                })
+                .collect())
+        }
+    }
+}
+
+/// 切换模型：卸载上一个（若支持），并预热加载当前模型。
+/// 返回可读的状态说明；所有底层调用均为尽力而为，不因引擎差异而报错。
+pub async fn activate_model(config: &LlmConfig, previous: Option<&str>) -> AppResult<String> {
+    if previous == Some(config.model.as_str()) {
+        return Ok(format!("模型 {} 已就绪", config.model));
+    }
+    let client = build_client(config)?;
+
+    match config.engine {
+        EngineKind::Ollama => {
+            let root = ollama_root(&config.base_url);
+            if let Some(prev) = previous {
+                let _ = client
+                    .post(endpoint(&root, "api/generate"))
+                    .json(&json!({ "model": prev, "keep_alive": 0 }))
+                    .send()
+                    .await;
+            }
+            // 预热：触发加载并保持 10 分钟。
+            let warm = client
+                .post(endpoint(&root, "api/generate"))
+                .json(&json!({ "model": config.model, "keep_alive": "10m" }))
+                .send()
+                .await;
+            match warm {
+                Ok(r) if r.status().is_success() => {
+                    Ok(format!("已加载模型 {}（已卸载上一个）", config.model))
+                }
+                _ => Ok(format!(
+                    "已切换为 {}；Ollama 将在首次请求时加载",
+                    config.model
+                )),
+            }
+        }
+        _ => {
+            // LM Studio：通过一次极小的补全触发即时（JIT）加载。
+            let req = ChatRequest {
+                model: &config.model,
+                messages: vec![ChatMessage {
+                    role: "user",
+                    content: "ok",
+                }],
+                temperature: 0.0,
+                max_tokens: 1,
+                stream: false,
+                response_format: None,
+                format: None,
+            };
+            let warmed = apply_auth(client.post(&endpoint(&config.base_url, "chat/completions")), config)
+                .json(&req)
+                .send()
+                .await
+                .map(|r| r.status().is_success())
+                .unwrap_or(false);
+            Ok(if warmed {
+                format!("已加载模型 {}", config.model)
+            } else {
+                format!("已切换为 {}；请在引擎中确认该模型已加载", config.model)
+            })
+        }
+    }
+}
+
 fn truncate(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
         s.to_string()

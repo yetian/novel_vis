@@ -35,6 +35,8 @@ export const api = {
   saveLlmConfig: (config: LlmConfig) => guard(() => invoke<void>("save_llm_config", { config })),
   getLlmConfig: () => guard(() => invoke<LlmConfig | null>("get_llm_config")),
   listModels: (config: LlmConfig) => guard(() => invoke<ModelInfo[]>("list_models", { config })),
+  listLoadedModels: (config: LlmConfig) => guard(() => invoke<ModelInfo[]>("list_loaded_models", { config })),
+  activateModel: (config: LlmConfig) => guard(() => invoke<string>("activate_model", { config })),
   testConnection: (config: LlmConfig) => guard(() => invoke<boolean>("test_connection", { config })),
   startExtraction: (request: ExtractionRequest) =>
     guard(() => invoke<ChapterExtractionResult[]>("start_extraction", { request })),
