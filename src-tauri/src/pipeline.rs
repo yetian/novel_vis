@@ -46,6 +46,11 @@ pub async fn run_extraction(
     let total = book.chapters.len();
     let chunk_chars = req.chunk_chars.unwrap_or(2000).clamp(800, 12_000);
 
+    // 未勾选「跳过已完成」= 重新处理整本书，先清除旧的抽取结果以避免重复。
+    if !req.skip_extracted {
+        db.clear_book_extraction(req.book_id)?;
+    }
+
     let mut results: Vec<ChapterExtractionResult> = Vec::with_capacity(total);
 
     for (pos, chapter) in book.chapters.iter().enumerate() {

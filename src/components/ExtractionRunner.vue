@@ -29,11 +29,21 @@ const phaseLabel: Record<string, string> = {
   cancelled: "已取消",
 };
 
-function start() {
+async function start() {
   if (!bookId.value) return;
   if (!llm.config.model) {
     ui.toast("请先在「引擎设置」中选择模型", "error");
     return;
+  }
+  // 关闭「跳过已完成」会重新处理整本书，并覆盖已有抽取数据。
+  if (!extraction.skipExtracted && (book.value?.extracted_chapters ?? 0) > 0) {
+    const ok = await ui.askConfirm({
+      title: "将重新抽取整本书",
+      message: `「跳过已完成」已关闭，将重新处理整本书，并删除该书已有的抽取数据（${book.value?.extracted_chapters} 章）。\n此操作不可撤销，确定继续吗？`,
+      confirmLabel: "删除并重新抽取",
+      danger: true,
+    });
+    if (!ok) return;
   }
   extraction.start(bookId.value);
 }
@@ -62,9 +72,11 @@ async function cancel() {
       </span>
 
       <div class="ml-auto flex flex-wrap items-center gap-2">
-        <label class="flex items-center gap-1.5 text-xs text-slate-400">
+        <label class="flex items-center gap-1.5 text-xs" :title="'关闭后将重新处理整本书，并删除已有的抽取数据'">
           <input v-model="extraction.skipExtracted" type="checkbox" class="accent-jade-500" />
-          跳过已完成
+          <span :class="extraction.skipExtracted ? 'text-slate-400' : 'text-gold-400'">
+            跳过已完成{{ extraction.skipExtracted ? "" : "（将清空重抽）" }}
+          </span>
         </label>
         <label class="flex items-center gap-1.5 text-xs text-slate-400">
           分块

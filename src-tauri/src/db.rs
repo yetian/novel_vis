@@ -436,6 +436,22 @@ impl Db {
         Ok(())
     }
 
+    /// 清除某本书已抽取的数据（节点 / 实体 / 事件 / 章节摘要），保留书籍与章节记录。
+    /// 用于「重新抽取整本书」前覆盖旧结果。
+    pub fn clear_book_extraction(&self, book_id: i64) -> AppResult<()> {
+        let mut conn = self.conn.lock();
+        let tx = conn.transaction()?;
+        tx.execute(
+            "DELETE FROM entity_events WHERE chapter_id IN (SELECT id FROM chapters WHERE book_id = ?1)",
+            params![book_id],
+        )?;
+        tx.execute("DELETE FROM spatiotemporal_nodes WHERE book_id = ?1", params![book_id])?;
+        tx.execute("DELETE FROM entities WHERE book_id = ?1", params![book_id])?;
+        tx.execute("UPDATE chapters SET raw_text_summary = NULL WHERE book_id = ?1", params![book_id])?;
+        tx.commit()?;
+        Ok(())
+    }
+
     /// 清空全部数据（用于清除被污染或测试导入的数据）。按子表 → 父表顺序删除。
     pub fn delete_all(&self) -> AppResult<()> {
         let conn = self.conn.lock();
@@ -648,6 +664,25 @@ mod tests {
         assert!(db.get_entities(book_id).unwrap().is_empty());
         assert!(db.get_events(book_id).unwrap().is_empty());
         assert!(db.get_chapters(book_id).unwrap().is_empty());
+    }
+
+    #[test]
+    fn clear_book_extraction_keeps_book_and_chapters() {
+        let db = Db::open_in_memory().unwrap();
+        let book_id = db.insert_book("B", None, "EPUB", 1, None, None).unwrap();
+        let ch_id = db.insert_chapter(book_id, 0, "c0", "h", None).unwrap();
+        db.persist_extraction(book_id, ch_id, &sample_extraction()).unwrap();
+        assert_eq!(db.get_entities(book_id).unwrap().len(), 2);
+
+        db.clear_book_extraction(book_id).unwrap();
+        assert!(db.get_entities(book_id).unwrap().is_empty());
+        assert!(db.get_events(book_id).unwrap().is_empty());
+        assert!(!db.chapter_extracted(ch_id).unwrap());
+        // 书籍与章节记录保留
+        assert_eq!(db.list_books().unwrap().len(), 1);
+        let chs = db.get_chapters(book_id).unwrap();
+        assert_eq!(chs.len(), 1);
+        assert!(chs[0].raw_text_summary.is_none());
     }
 
     #[test]

@@ -3,6 +3,11 @@
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/) 与 [Conventional Commits](https://www.conventionalcommits.org/zh-hans/)。
 每个有意义的功能实现或修复均递增 PATCH 版本。
 
+## [0.1.17] - fix(extract)
+
+- 重新抽取（取消勾选「跳过已完成」）前先清除该书旧抽取数据（`clear_book_extraction`：节点/实体/事件/章节摘要），避免重复或错乱；书籍与章节记录保留。
+- 前端开始前弹出确认警告，并在复选框处提示「将清空重抽」。
+
 ## [0.1.16] - feat(llm)
 
 - 模型切换：新增 `activate_model`（卸载旧模型 + 预热加载新模型）与 `list_loaded_models`（Ollama `/api/ps`、LM Studio `/api/v0/models`）；`start_extraction` 前自动激活目标模型，`AppState.active_model` 记录当前激活模型。

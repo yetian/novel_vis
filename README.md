@@ -1,6 +1,6 @@
 # 时空编年史 · ChronoSpace Reader
 
-> 当前版本：**v0.1.16**
+> 当前版本：**v0.1.17**
 
 **ChronoSpace Reader（时空编年史）** 是一款跨平台桌面应用，使用 **Tauri 2.0（Rust）+ Vue 3（Vite / Pinia / TypeScript / TailwindCSS）** 构建。
 它把 EPUB / MOBI / AZW3 电子书**在内存中**解析分章，借助**本地大模型**（LM Studio 或 Ollama，OpenAI 兼容 API）抽取**时间、空间、人物、物品/功法与因果**结构，持久化到本地 SQLite，并以**交互式时空图谱**呈现，一键导出可部署到 GitHub Pages 的**零依赖单页 HTML**。
@@ -21,7 +21,7 @@
   - 强制 JSON 输出（`response_format: { type: "json_object" }`），温度默认 `0.1`。
 - **叙事视角归一化**：同时支持第一/第三人称，自动将「我」解析为主角规范名或 `PROTAGONIST_FIRST_PERSON`。
 - **题材无关 & 抗幻觉**：提示词不预设题材（现实/都市/历史/科幻/武侠/玄幻皆可）、不带任何示例人名地名；模型输出后按正文**校验实体**，剔除未在原文出现的条目，避免污染数据库。
-- **批量抽取运行器**：暂停 / 继续 / 取消、章节进度条、**逐章 SQLite 事务检查点**（可断点续跑）。**支持多本并发**：每个任务按书籍独立跟踪，可暂停一本并同时抽取另一本。
+- **批量抽取运行器**：暂停 / 继续 / 取消、章节进度条、**逐章 SQLite 事务检查点**（可断点续跑）。**支持多本并发**：每个任务按书籍独立跟踪，可暂停一本并同时抽取另一本。关闭「跳过已完成」将重新处理整本书——**会清除该书旧抽取数据并弹出确认**，避免数据重复或错乱。
 - **动态时空画布**：
   - 拓扑空间图（Cytoscape.js），确定性布局：每个 `world`（人界 / 灵界…）一块网格，`site` 卡片式排布；边的颜色区分移动类型（STAY / TELEPORT / ASCENSION / DUNGEON…）。**点击地点卡片查看元数据**（出现章节、人物、物品/功法、时间标记）。
   - **可视化时间线**：章节刻度、时间跳跃（▲）/ 倒叙（▼）标记与天数增量，点击跳转；实体事件高亮。
@@ -161,7 +161,7 @@ npm run tauri:build
 npm run test          # 等价于 npm run test:rust -> cargo test
 ```
 
-- **单元测试**（`#[cfg(test)]`，共 44 项）：`parser::util`（HTML 清洗/实体解码/哈希/标题推测）、`parser::encoding`（UTF-8 / GBK / BOM / XML 编码嗅探 / 中文可读性打分）、`parser::epub`（内存 ZIP 构造的端到端 EPUB 解析、NCX/EPUB3 nav 合订本探测、UTF-8 边界安全的标题抽取）、`parser::mobi`（PalmDOC 解压）、`parser::mod`（格式探测 + 合订本拆分与再索引）、`pipeline`（JSON 修复/重试/分块/视角归一化）、`db`（模式 + 持久化 + 级联删除 + 幂等）、`paths`（数据目录解析）。
+- **单元测试**（`#[cfg(test)]`，共 45 项）：`parser::util`（HTML 清洗/实体解码/哈希/标题推测）、`parser::encoding`（UTF-8 / GBK / BOM / XML 编码嗅探 / 中文可读性打分）、`parser::epub`（内存 ZIP 构造的端到端 EPUB 解析、NCX/EPUB3 nav 合订本探测、UTF-8 边界安全的标题抽取）、`parser::mobi`（PalmDOC 解压）、`parser::mod`（格式探测 + 合订本拆分与再索引）、`pipeline`（JSON 修复/重试/分块/视角归一化）、`db`（模式 + 持久化 + 级联删除 + 幂等）、`paths`（数据目录解析）。
 - **集成测试**（`src-tauri/tests/pipeline_db_roundtrip.rs`）：通过公开 API 验证「LLM JSON → SQLite → 时空聚合查询」全链路。
 
 前端目前仅有类型检查（`npm run typecheck`）。
