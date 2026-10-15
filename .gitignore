@@ -1,0 +1,22 @@
+# 依赖
+node_modules/
+src-tauri/target/
+
+# 构建产物
+dist/
+src-tauri/gen/
+*.local
+
+# 编辑器 / 系统
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+*.log
+
+# 运行期数据（内存数据库与本地配置）
+*.sqlite3
+*.sqlite3-journal
+*.sqlite3-wal
+*.sqlite3-shm
+llm_config.json
