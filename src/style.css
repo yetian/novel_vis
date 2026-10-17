@@ -14,10 +14,24 @@ body,
 }
 
 body {
-  @apply bg-ink-900 text-slate-200 font-sans antialiased;
-  background-image: radial-gradient(1200px 600px at 20% -10%, rgba(32, 201, 151, 0.08), transparent),
-    radial-gradient(900px 500px at 110% 10%, rgba(240, 180, 41, 0.06), transparent);
+  @apply bg-ink-900 font-sans text-slate-200 antialiased;
+  background-image: radial-gradient(1200px 600px at 20% -10%, rgba(32, 201, 151, 0.09), transparent),
+    radial-gradient(900px 500px at 110% 10%, rgba(240, 180, 41, 0.07), transparent);
   background-attachment: fixed;
+  line-height: 1.6;
+  text-rendering: optimizeLegibility;
+  font-feature-settings: "kern" 1, "liga" 1;
+  font-synthesis: none;
+}
+
+::selection {
+  background: rgba(32, 201, 151, 0.32);
+  color: #f8fafc;
+}
+
+:focus-visible {
+  outline: 2px solid rgba(56, 217, 169, 0.8);
+  outline-offset: 2px;
 }
 
 ::-webkit-scrollbar {
@@ -28,7 +42,7 @@ body {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  @apply bg-ink-500 rounded-full;
+  @apply rounded-full bg-ink-500;
 }
 ::-webkit-scrollbar-thumb:hover {
   @apply bg-jade-600;
@@ -36,14 +50,14 @@ body {
 
 @layer components {
   .panel {
-    @apply rounded-xl border border-ink-500/60 bg-ink-800/70 backdrop-blur-sm;
+    @apply rounded-2xl border border-ink-500/50 bg-ink-800/80 shadow-lg backdrop-blur-sm;
   }
   .btn {
     @apply inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition
       disabled:cursor-not-allowed disabled:opacity-40;
   }
   .btn-primary {
-    @apply btn bg-jade-500 text-ink-900 hover:bg-jade-400 shadow-glow;
+    @apply btn bg-jade-500 text-ink-900 shadow-glow hover:bg-jade-400;
   }
   .btn-ghost {
     @apply btn bg-ink-600/70 text-slate-200 hover:bg-ink-500;
@@ -52,8 +66,9 @@ body {
     @apply btn bg-cinnabar-500/90 text-white hover:bg-cinnabar-400;
   }
   .input {
-    @apply w-full rounded-lg border border-ink-500/70 bg-ink-900/80 px-3 py-2 text-sm text-slate-100
-      outline-none transition focus:border-jade-500 focus:ring-1 focus:ring-jade-500/40;
+    @apply w-full rounded-lg border border-ink-500/80 bg-ink-900/90 px-3 py-2 text-sm text-slate-100
+      placeholder:text-slate-500 outline-none transition focus:border-jade-500 focus:ring-1
+      focus:ring-jade-500/40;
   }
   .label {
     @apply mb-1 block text-xs font-medium uppercase tracking-wide text-slate-400;

@@ -62,23 +62,27 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="flex h-full flex-col">
-    <header class="flex items-center gap-4 border-b border-ink-600/60 bg-ink-800/60 px-5 py-3 backdrop-blur">
+    <header class="flex items-center gap-4 border-b border-ink-500/40 bg-ink-800/75 px-5 py-3 backdrop-blur">
       <div class="flex items-center gap-3">
-        <div class="grid h-9 w-9 place-items-center rounded-lg bg-jade-500/15 text-jade-400 shadow-glow">
+        <div class="grid h-9 w-9 place-items-center rounded-xl border border-jade-500/20 bg-jade-500/15 text-jade-400 shadow-glow">
           <i class="fa-solid fa-timeline text-lg" />
         </div>
         <div>
-          <h1 class="text-base font-semibold leading-tight text-slate-100">时空编年史</h1>
-          <p class="text-[11px] text-slate-500">ChronoSpace Reader · 本地叙事结构抽取</p>
+          <h1 class="font-serif text-[17px] font-semibold leading-tight text-slate-100">时空编年史</h1>
+          <p class="text-[11px] text-slate-400">ChronoSpace Reader · 本地叙事结构抽取</p>
         </div>
       </div>
 
-      <nav class="ml-4 flex items-center gap-1 rounded-lg bg-ink-900/60 p-1">
+      <nav class="ml-4 flex items-center gap-1 rounded-xl border border-ink-500/30 bg-ink-900/50 p-1">
         <button
           v-for="item in navItems"
           :key="item.key"
           class="btn !px-3 !py-1.5"
-          :class="ui.activeView === item.key ? 'bg-jade-500 text-ink-900' : 'text-slate-300 hover:bg-ink-600'"
+          :class="
+            ui.activeView === item.key
+              ? 'bg-jade-500 text-ink-900 shadow-sm'
+              : 'text-slate-300 hover:bg-ink-600/80 hover:text-slate-100'
+          "
           @click="ui.setView(item.key)"
         >
           <i class="fa-solid" :class="item.icon" />
@@ -87,14 +91,14 @@ onBeforeUnmount(() => {
       </nav>
 
       <div class="ml-auto flex items-center gap-3">
-        <span class="hidden rounded-md border border-ink-600/60 px-2 py-1 text-[11px] text-slate-500 sm:inline">
+        <span class="hidden rounded-md border border-ink-500/50 px-2 py-1 text-[11px] tabular-nums text-slate-400 sm:inline">
           v{{ version }}
         </span>
-        <div class="hidden items-center gap-2 rounded-lg border border-ink-600/60 px-3 py-1.5 text-xs md:flex">
+        <div class="hidden items-center gap-2 rounded-lg border border-ink-500/50 bg-ink-900/30 px-3 py-1.5 text-xs md:flex">
           <span class="h-2 w-2 rounded-full" :class="llm.connected ? 'bg-jade-500' : 'bg-slate-500'" />
-          <span class="text-slate-400">{{ llm.engineLabel }}</span>
+          <span class="text-slate-300">{{ llm.engineLabel }}</span>
           <span class="text-slate-600">|</span>
-          <span class="max-w-[160px] truncate text-slate-300">{{ llm.config.model || "未选择模型" }}</span>
+          <span class="max-w-[160px] truncate text-slate-200">{{ llm.config.model || "未选择模型" }}</span>
         </div>
         <button class="btn-ghost" title="引擎设置" @click="ui.setView('settings')">
           <i class="fa-solid fa-gear" />

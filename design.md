@@ -1,6 +1,6 @@
 # ChronoSpace Reader · 架构设计蓝图（design.md）
 
-> 当前版本：**v0.1.24**
+> 当前版本：**v0.1.25**
 > 本文档描述系统架构、数据流、SQLite 关系模式、状态机、协议契约与 UI 组件层级，并与代码库保持同步。
 
 ---
@@ -376,9 +376,9 @@ stateDiagram-v2
 ```
 App.vue
 ├── header (导航 + 引擎状态)
-├── Sidebar.vue              书库列表 / 抽取进度
+├── Sidebar.vue              书库列表 / 抽取进度 / 完成与抽取中状态
 ├── main
-│   ├── LibraryView.vue      导入区 · 统计 · ExtractionRunner · 藏书卡片(导出/删除)
+│   ├── LibraryView.vue      导入区 · 统计 · ExtractionRunner · 藏书卡片(总览/抽取/画布/导出/删除)
 │   │   └── ExtractionRunner.vue   开始/暂停/继续/取消 · 进度条 · 日志
 │   ├── SpacetimeCanvas.vue
 │   │   ├── SpaceGraph.vue          时间 × 空间矩阵：横轴章节、每行一个地点；人物首现圆点 + 跨时空轨迹 + 关系虚线 + 当前行高亮
