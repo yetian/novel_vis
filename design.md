@@ -1,6 +1,6 @@
 # ChronoSpace Reader · 架构设计蓝图（design.md）
 
-> 当前版本：**v0.1.19**
+> 当前版本：**v0.1.20**
 > 本文档描述系统架构、数据流、SQLite 关系模式、状态机、协议契约与 UI 组件层级，并与代码库保持同步。
 
 ---
@@ -367,7 +367,6 @@ App.vue
 │   │   └── ExtractionRunner.vue   开始/暂停/继续/取消 · 进度条 · 日志
 │   ├── SpacetimeCanvas.vue
 │   │   ├── SpaceGraph.vue          时间 × 空间矩阵：横轴章节、每行一个地点；人物首现圆点 + 跨时空轨迹 + 关系虚线
-│   │   ├── StoryTimeline.vue       可视化时间线：章节刻度、时间跳跃/倒叙标记、实体事件高亮
 │   │   ├── TimeScrubber.vue        章节轴 + 虚拟时间线双滑块
 │   │   └── EntityDrawer.vue        人物 / 物品功法 谱系抽屉
 │   ├── RelationGraph.vue     人物关系图（同章共现，节点按出场次数、连线按共现次数）

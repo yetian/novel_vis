@@ -19,8 +19,6 @@ const cumulativeDays = computed(() => {
 
 const maxDays = computed(() => cumulativeDays.value[cumulativeDays.value.length - 1] ?? 0);
 
-const currentChapter = computed(() => props.chapters[props.modelValue]);
-
 const virtualDays = computed(() => cumulativeDays.value[props.modelValue] ?? 0);
 
 function onChapterInput(e: Event) {
@@ -78,17 +76,5 @@ function onTimeInput(e: Event) {
       />
     </div>
 
-    <div v-if="currentChapter" class="mt-1 flex flex-wrap items-center gap-2 text-[11px]">
-      <span class="text-gold-400">第 {{ currentChapter.chapter_index + 1 }} 章 · {{ currentChapter.title }}</span>
-      <span v-if="currentChapter.temporal_type" class="rounded-full border border-jade-500/40 px-2 py-0.5 text-jade-400">
-        {{ currentChapter.temporal_type }}
-      </span>
-      <span v-if="currentChapter.movement_type" class="rounded-full border border-ink-500 px-2 py-0.5 text-slate-400">
-        {{ currentChapter.movement_type }}
-      </span>
-      <span v-if="currentChapter.world" class="rounded-full border border-gold-400/40 px-2 py-0.5 text-gold-400">
-        {{ currentChapter.world }}<template v-if="currentChapter.site"> · {{ currentChapter.site }}</template>
-      </span>
-    </div>
   </div>
 </template>

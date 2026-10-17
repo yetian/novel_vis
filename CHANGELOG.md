@@ -3,6 +3,11 @@
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/) 与 [Conventional Commits](https://www.conventionalcommits.org/zh-hans/)。
 每个有意义的功能实现或修复均递增 PATCH 版本。
 
+## [0.1.20] - refactor(canvas)
+
+- 清理时空画布重复面板：移除 `StoryTimeline`（其章节刻度、跳跃/倒叙标记、点击跳转已由时空矩阵与顶部时间轴承担）。
+- 将当前章节标题/时间/移动/地点徽标合并进「剧情摘要」面板，并移除 `TimeScrubber` 中重复的章节信息行。
+
 ## [0.1.19] - feat(canvas)
 
 - 时空画布重做为「时间 × 空间」矩阵：横轴为章节、每行一个空间，人物首现圆点 + 跨行/跨列轨迹；`chunk_chars=0` 支持整章输入（不切块），前端新增「整章」开关。

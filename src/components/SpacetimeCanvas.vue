@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import SpaceGraph from "@/components/SpaceGraph.vue";
-import StoryTimeline from "@/components/StoryTimeline.vue";
 import TimeScrubber from "@/components/TimeScrubber.vue";
 import EntityDrawer from "@/components/EntityDrawer.vue";
 import { useLibraryStore } from "@/stores/library";
@@ -182,19 +181,32 @@ function seek(i: number) {
           </div>
 
           <div class="space-y-2 p-3">
-            <StoryTimeline
-              :chapters="chapters"
-              :entities="entities"
-              :events="events"
-              :active-index="activeIndex"
-              :highlight-entity-id="selectedEntityId"
-              @update:active-index="activeIndex = $event"
-            />
             <TimeScrubber v-model="activeIndex" :chapters="chapters" />
             <div v-if="currentChapter" class="panel px-4 py-3 text-sm">
-              <div class="flex items-center gap-2">
+              <div class="flex flex-wrap items-center gap-2">
                 <i class="fa-solid fa-quote-left text-jade-500" />
                 <span class="text-xs uppercase tracking-wide text-slate-500">剧情摘要</span>
+                <span class="rounded-full border border-ink-500 px-2 py-0.5 text-[11px] text-slate-300">
+                  第 {{ currentChapter.chapter_index + 1 }} 章 · {{ currentChapter.title }}
+                </span>
+                <span
+                  v-if="currentChapter.temporal_type"
+                  class="rounded-full border border-jade-500/40 px-2 py-0.5 text-[11px] text-jade-400"
+                >
+                  {{ currentChapter.temporal_type }}
+                </span>
+                <span
+                  v-if="currentChapter.movement_type"
+                  class="rounded-full border border-ink-500 px-2 py-0.5 text-[11px] text-slate-400"
+                >
+                  {{ currentChapter.movement_type }}
+                </span>
+                <span
+                  v-if="currentChapter.world"
+                  class="rounded-full border border-gold-400/40 px-2 py-0.5 text-[11px] text-gold-400"
+                >
+                  {{ currentChapter.world }}<template v-if="currentChapter.site"> · {{ currentChapter.site }}</template>
+                </span>
               </div>
               <p class="mt-1 text-slate-300">{{ currentChapter.raw_text_summary || "（暂无摘要）" }}</p>
             </div>
