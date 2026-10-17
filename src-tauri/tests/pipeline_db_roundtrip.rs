@@ -21,13 +21,18 @@ const MODEL_OUTPUT: &str = r#"
 #[test]
 fn parse_then_persist_then_query() {
     let db = Db::open_in_memory().expect("内存数据库");
-    let book_id = db.insert_book("集成测试", Some("作者"), "EPUB", 1, None, None).unwrap();
-    let chapter_id = db.insert_chapter(book_id, 0, "七玄深谷", "hash", None).unwrap();
+    let book_id = db
+        .insert_book("集成测试", Some("作者"), "EPUB", 1, None, None)
+        .unwrap();
+    let chapter_id = db
+        .insert_chapter(book_id, 0, "七玄深谷", "hash", None)
+        .unwrap();
 
     let (extraction, repaired) = parse_extraction(MODEL_OUTPUT).expect("解析模型输出");
     assert!(!repaired, "合法 JSON 不应触发修复");
 
-    db.persist_extraction(book_id, chapter_id, &extraction).unwrap();
+    db.persist_extraction(book_id, chapter_id, &extraction)
+        .unwrap();
 
     let bundle = db.timeline_bundle(book_id).unwrap();
     assert_eq!(bundle.book.title, "集成测试");

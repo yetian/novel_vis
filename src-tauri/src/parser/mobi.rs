@@ -1,4 +1,4 @@
-use super::util::{guess_title, hash_text, strip_html};
+use super::util::{guess_title_with_book, hash_text, strip_html};
 use crate::error::{AppError, AppResult};
 use crate::models::{ParsedBook, ParsedChapter};
 
@@ -84,7 +84,7 @@ pub fn parse(bytes: &[u8], fallback_title: &str) -> AppResult<ParsedBook> {
     let mut chapters = Vec::new();
     for (i, text) in segments.into_iter().enumerate() {
         let idx = i as i64;
-        let chapter_title = guess_title(&text, idx);
+        let chapter_title = guess_title_with_book(&text, idx, Some(&title));
         chapters.push(ParsedChapter {
             chapter_index: idx,
             title: chapter_title,
@@ -212,7 +212,12 @@ fn detect_encoding(record0: &[u8]) -> u32 {
     // MOBI header 位于 record0 偏移 16 处，textEncoding 在 MOBI 内偏移 0x1C。
     if record0.len() >= 16 + 0x20 && &record0[16..20] == b"MOBI" {
         let off = 16 + 0x1C;
-        u32::from_be_bytes([record0[off], record0[off + 1], record0[off + 2], record0[off + 3]])
+        u32::from_be_bytes([
+            record0[off],
+            record0[off + 1],
+            record0[off + 2],
+            record0[off + 3],
+        ])
     } else {
         65001
     }
@@ -235,24 +240,35 @@ fn declared_name(code: u32) -> Option<&'static str> {
 
 /// 从 EXTH 记录中读取书名 (type 503) 或作者 (type 100)。
 fn extract_exth_title(record0: &[u8]) -> Option<String> {
-    let mobi_len = u32::from_be_bytes([record0[20], record0[21], record0[22], record0[23]]) as usize;
+    let mobi_len =
+        u32::from_be_bytes([record0[20], record0[21], record0[22], record0[23]]) as usize;
     let exth_start = 16 + mobi_len;
     if exth_start + 12 > record0.len() || &record0[exth_start..exth_start + 4] != b"EXTH" {
         return None;
     }
-    let rec_count =
-        u32::from_be_bytes([record0[exth_start + 8], record0[exth_start + 9], record0[exth_start + 10], record0[exth_start + 11]])
-            as usize;
+    let rec_count = u32::from_be_bytes([
+        record0[exth_start + 8],
+        record0[exth_start + 9],
+        record0[exth_start + 10],
+        record0[exth_start + 11],
+    ]) as usize;
     let mut pos = exth_start + 12;
     for _ in 0..rec_count {
         if pos + 8 > record0.len() {
             break;
         }
-        let rec_type =
-            u32::from_be_bytes([record0[pos], record0[pos + 1], record0[pos + 2], record0[pos + 3]]);
-        let rec_len =
-            u32::from_be_bytes([record0[pos + 4], record0[pos + 5], record0[pos + 6], record0[pos + 7]])
-                as usize;
+        let rec_type = u32::from_be_bytes([
+            record0[pos],
+            record0[pos + 1],
+            record0[pos + 2],
+            record0[pos + 3],
+        ]);
+        let rec_len = u32::from_be_bytes([
+            record0[pos + 4],
+            record0[pos + 5],
+            record0[pos + 6],
+            record0[pos + 7],
+        ]) as usize;
         if rec_len < 8 || pos + rec_len > record0.len() {
             break;
         }

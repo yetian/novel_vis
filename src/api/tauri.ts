@@ -45,6 +45,8 @@ export const api = {
   pauseExtraction: (bookId: number) => guard(() => invoke<void>("pause_extraction", { bookId })),
   resumeExtraction: (bookId: number) => guard(() => invoke<void>("resume_extraction", { bookId })),
   cancelExtraction: (bookId: number) => guard(() => invoke<void>("cancel_extraction", { bookId })),
+  generateBookSummary: (bookId: number, config: LlmConfig) =>
+    guard(() => invoke<string>("generate_book_summary", { bookId, config })),
   readTextFile: (path: string) => guard(() => invoke<string>("read_text_file", { path })),
   getDataDir: () => guard(() => invoke<string>("get_data_dir")),
 };

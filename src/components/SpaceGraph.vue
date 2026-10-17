@@ -257,6 +257,8 @@ interface RelationEdge {
   a: number;
   b: number;
   weight: number;
+  first: number;
+  last: number;
   x1: number;
   y1: number;
   x2: number;
@@ -273,7 +275,10 @@ const relationEdges = computed<RelationEdge[]>(() => {
     }
   }
 
-  const weights = new Map<string, { a: number; b: number; weight: number; chapter: number }>();
+  const weights = new Map<
+    string,
+    { a: number; b: number; weight: number; first: number; last: number }
+  >();
   for (const [chapter, ids] of byChapter) {
     const unique = [...new Set(ids)].sort((a, b) => a - b);
     for (let i = 0; i < unique.length; i++) {
@@ -282,9 +287,10 @@ const relationEdges = computed<RelationEdge[]>(() => {
         const found = weights.get(key);
         if (found) {
           found.weight += 1;
-          if (chapter < found.chapter) found.chapter = chapter;
+          found.first = Math.min(found.first, chapter);
+          found.last = Math.max(found.last, chapter);
         } else {
-          weights.set(key, { a: unique[i], b: unique[j], weight: 1, chapter });
+          weights.set(key, { a: unique[i], b: unique[j], weight: 1, first: chapter, last: chapter });
         }
       }
     }
@@ -292,10 +298,21 @@ const relationEdges = computed<RelationEdge[]>(() => {
 
   let edges: RelationEdge[] = [];
   for (const [key, w] of weights) {
-    const pa = pointAt.value.get(`${w.a}|${w.chapter}`);
-    const pb = pointAt.value.get(`${w.b}|${w.chapter}`);
+    const pa = pointAt.value.get(`${w.a}|${w.first}`);
+    const pb = pointAt.value.get(`${w.b}|${w.first}`);
     if (!pa || !pb) continue;
-    edges.push({ id: `rel::${key}`, a: w.a, b: w.b, weight: w.weight, x1: pa.x, y1: pa.y, x2: pb.x, y2: pb.y });
+    edges.push({
+      id: `rel::${key}`,
+      a: w.a,
+      b: w.b,
+      weight: w.weight,
+      first: w.first,
+      last: w.last,
+      x1: pa.x,
+      y1: pa.y,
+      x2: pb.x,
+      y2: pb.y,
+    });
   }
 
   if (props.highlightEntityId != null) {
@@ -481,11 +498,11 @@ onMounted(() => requestAnimationFrame(scrollToActive));
             :d="relPath(e)"
             fill="none"
             :stroke="highlightEntityId != null ? '#f0b429' : '#94a3b8'"
-            :stroke-width="highlightEntityId != null ? 1.6 : 1"
+            :stroke-width="highlightEntityId != null ? 1.6 : 1 + Math.min(2.2, e.weight * 0.18)"
             stroke-dasharray="3 5"
-            :opacity="highlightEntityId != null ? 0.75 : 0.32"
+            :opacity="highlightEntityId != null ? 0.75 : 0.28 + Math.min(0.32, e.weight * 0.03)"
           >
-            <title>共同出场 {{ e.weight }} 章</title>
+            <title>共同出场 {{ e.weight }} 章（第 {{ e.first + 1 }}–{{ e.last + 1 }} 章）</title>
           </path>
         </g>
 

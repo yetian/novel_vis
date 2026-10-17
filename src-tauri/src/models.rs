@@ -171,6 +171,8 @@ pub struct BookRow {
     pub created_at: String,
     pub extracted_chapters: i64,
     pub source_path: Option<String>,
+    /// 全书总览：所有章节抽取完成后由模型生成（旧数据可能为空）。
+    pub summary: Option<String>,
 }
 
 /// 重新定位源文件的结果。

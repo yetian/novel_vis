@@ -52,6 +52,8 @@ export interface BookRow {
   created_at: string;
   extracted_chapters: number;
   source_path?: string | null;
+  /** 全书总览；仅当全书抽取完成后生成。 */
+  summary?: string | null;
 }
 
 export interface SourceCheck {

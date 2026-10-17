@@ -154,19 +154,193 @@ pub async fn run_extraction(
 
     results.sort_by_key(|r| r.chapter_index);
 
+    // 只有整本书全部成功处理后才生成全书总览，避免用残缺数据误导。
+    let completed =
+        !control.is_cancelled() && results.len() == total && results.iter().all(|r| r.ok);
+    if completed {
+        emit_progress(
+            &app,
+            &req.book_id,
+            "summarizing",
+            total,
+            total,
+            0,
+            "",
+            "全部章节抽取完成，正在生成全书总览…",
+            0,
+        );
+        match summarize_book(
+            &req.llm,
+            req.book_id,
+            &book.title,
+            book.author.as_deref(),
+            &db,
+        )
+        .await
+        {
+            Ok(Some(summary)) => {
+                db.set_book_summary(req.book_id, &summary)?;
+                emit_log(
+                    &app,
+                    req.book_id,
+                    &format!("全书总览已生成（{} 字）", summary.chars().count()),
+                );
+            }
+            Ok(None) => emit_log(&app, req.book_id, "没有可用的章节摘要，跳过全书总览"),
+            Err(e) => emit_log(&app, req.book_id, &format!("全书总览生成失败: {e}")),
+        }
+    }
+
     emit_progress(
         &app,
         &req.book_id,
-        if control.is_cancelled() { "cancelled" } else { "finished" },
+        if control.is_cancelled() {
+            "cancelled"
+        } else {
+            "finished"
+        },
         total,
         total,
         0,
         "",
-        if control.is_cancelled() { "任务已取消（进度已保存）" } else { "全部章节抽取完成" },
+        if control.is_cancelled() {
+            "任务已取消（进度已保存）"
+        } else {
+            "全部章节抽取完成"
+        },
         0,
     );
     state.clear_job(req.book_id);
     Ok(results)
+}
+
+const BOOK_SUMMARY_SYSTEM: &str = r#"你是资深中文小说编辑。你只输出一个 JSON 对象，不得输出解释、Markdown 或代码块。
+输出格式：{"summary":"全书总览正文"}。
+要求：只依据用户提供的章节/阶段摘要写作；不要编造未给出的情节；用简体中文；语言简洁、连贯、有概括力。"#;
+
+/// 用章节摘要生成全书总览。章节很多时先分批生成阶段摘要，再汇总最终总览。
+pub async fn summarize_book(
+    config: &LlmConfig,
+    book_id: i64,
+    title: &str,
+    author: Option<&str>,
+    db: &crate::db::Db,
+) -> AppResult<Option<String>> {
+    let chapters = db.get_chapters(book_id)?;
+    let mut lines = Vec::new();
+    for c in &chapters {
+        let Some(summary) = c
+            .raw_text_summary
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        else {
+            continue;
+        };
+        let summary: String = summary.chars().take(140).collect();
+        let chapter_title = c.title.trim();
+        if chapter_title.is_empty() {
+            lines.push(format!("第 {} 章：{summary}", c.chapter_index + 1));
+        } else {
+            lines.push(format!(
+                "第 {} 章 {chapter_title}：{summary}",
+                c.chapter_index + 1
+            ));
+        }
+    }
+    if lines.is_empty() {
+        return Ok(None);
+    }
+
+    // 控制单次上下文规模，兼容 8k 上下文的本地模型；过长时自动分批。
+    let batches = pack_summary_lines(&lines, 5_000);
+    let staged = batches.len() > 1;
+    let parts = if !staged {
+        batches
+    } else {
+        let mut stage_summaries = Vec::with_capacity(batches.len());
+        for (i, batch) in batches.iter().enumerate() {
+            let prompt = format!(
+                "以下是《{}》第 {}/{} 组的章节摘要。请用 180-260 字概括这一阶段的剧情推进、主要人物与地点变化，作为后续全书总览的素材。只输出 JSON：{{\"summary\":\"...\"}}\n\n{}",
+                title,
+                i + 1,
+                batches.len(),
+                batch
+            );
+            stage_summaries.push(call_summary(config, &prompt).await?);
+        }
+        stage_summaries
+    };
+
+    let author_line = author
+        .map(str::trim)
+        .filter(|a| !a.is_empty())
+        .map(|a| format!("作者：{a}"))
+        .unwrap_or_default();
+    let material = parts.join("\n\n");
+    let scope = if staged {
+        "以下是全书各阶段的摘要"
+    } else {
+        "以下是全书的章节摘要"
+    };
+    let prompt = format!(
+        "《{title}》{author_line}\n{scope}。请写一段 300-500 字的全书总览，要求：\n1. 概括核心设定、世界/空间与主线冲突；\n2. 梳理开端—发展—转折—结局（若未完结，概括当前进展）；\n3. 点出 3-8 位关键人物及其关系或作用；\n4. 只依据下面材料，不编造未出现的情节；\n5. 不分点，写成连贯的段落。\n只输出 JSON：{{\"summary\":\"...\"}}\n\n{}",
+        material
+    );
+    let summary = call_summary(config, &prompt).await?;
+    Ok(Some(summary))
+}
+
+/// 按字符预算把章节摘要打包成若干组，保持章节顺序。
+pub fn pack_summary_lines(lines: &[String], max_chars: usize) -> Vec<String> {
+    let budget = max_chars.max(200);
+    let mut out = Vec::new();
+    let mut current = String::new();
+    for line in lines {
+        let line: String = line.chars().take(budget).collect();
+        if line.trim().is_empty() {
+            continue;
+        }
+        if !current.is_empty() && current.chars().count() + line.chars().count() + 1 > budget {
+            out.push(current);
+            current = String::new();
+        }
+        if !current.is_empty() {
+            current.push('\n');
+        }
+        current.push_str(&line);
+    }
+    if !current.is_empty() {
+        out.push(current);
+    }
+    out
+}
+
+async fn call_summary(config: &LlmConfig, prompt: &str) -> AppResult<String> {
+    let mut cfg = config.clone();
+    cfg.max_tokens = cfg.max_tokens.max(1_400);
+    let raw = llm::chat_json(&cfg, BOOK_SUMMARY_SYSTEM, prompt, true).await?;
+    parse_summary_output(&raw).ok_or_else(|| AppError::Llm("全书总览为空或格式无效".into()))
+}
+
+fn parse_summary_output(raw: &str) -> Option<String> {
+    if let Some(block) = extract_json_block(raw) {
+        if let Ok(value) = serde_json::from_str::<Value>(&block) {
+            if let Some(summary) = value.get("summary").and_then(Value::as_str) {
+                let summary = summary.trim();
+                if !summary.is_empty() {
+                    return Some(summary.to_string());
+                }
+            }
+        }
+    }
+    let text = raw.trim();
+    let text = text
+        .strip_prefix("```json")
+        .or_else(|| text.strip_prefix("```"))
+        .unwrap_or(text);
+    let text = text.strip_suffix("```").unwrap_or(text).trim();
+    (!text.is_empty()).then(|| text.to_string())
 }
 
 /// 抽取单个章节（含其所有分块）。作为并发任务单元运行。
@@ -210,7 +384,12 @@ async fn extract_chapter(
             total,
             chapter.chapter_index,
             &chapter.title,
-            &format!("正在抽取第 {} 章 · 分块 {}/{}", chapter.chapter_index + 1, ci + 1, chunk_total),
+            &format!(
+                "正在抽取第 {} 章 · 分块 {}/{}",
+                chapter.chapter_index + 1,
+                ci + 1,
+                chunk_total
+            ),
             0,
         );
 
@@ -232,7 +411,12 @@ async fn extract_chapter(
                 emit_log(
                     &app,
                     book_id,
-                    &format!("第 {} 章分块 {} 抽取失败: {}", chapter.chapter_index + 1, ci + 1, e),
+                    &format!(
+                        "第 {} 章分块 {} 抽取失败: {}",
+                        chapter.chapter_index + 1,
+                        ci + 1,
+                        e
+                    ),
                 );
             }
         }
@@ -246,7 +430,11 @@ async fn extract_chapter(
         total,
         chapter.chapter_index,
         &chapter.title,
-        if chapter_ok { "章节完成" } else { "章节存在失败分块" },
+        if chapter_ok {
+            "章节完成"
+        } else {
+            "章节存在失败分块"
+        },
         retries_total,
     );
 
@@ -311,7 +499,11 @@ async fn extract_chunk(
                     emit_log(
                         app,
                         book_id,
-                        &format!("第 {} 章：已过滤 {} 个未在正文出现的实体", chapter.chapter_index + 1, dropped),
+                        &format!(
+                            "第 {} 章：已过滤 {} 个未在正文出现的实体",
+                            chapter.chapter_index + 1,
+                            dropped
+                        ),
                     );
                 }
                 return Ok((ext, retries, locally_repaired || attempt > 0));
@@ -481,7 +673,12 @@ fn normalize_value(value: &mut Value) {
     }
 
     if let Some(Value::Array(chars)) = obj.get_mut("characters") {
-        chars.retain(|c| c.get("name").and_then(Value::as_str).map(|s| !s.trim().is_empty()).unwrap_or(false));
+        chars.retain(|c| {
+            c.get("name")
+                .and_then(Value::as_str)
+                .map(|s| !s.trim().is_empty())
+                .unwrap_or(false)
+        });
         // importance 容忍字符串/浮点，并夹紧到 1–5，避免小模型格式偏差导致整段解析失败。
         for c in chars.iter_mut() {
             if let Some(slot) = c.get_mut("importance") {
@@ -498,7 +695,12 @@ fn normalize_value(value: &mut Value) {
         }
     }
     if let Some(Value::Array(items)) = obj.get_mut("items_and_skills") {
-        items.retain(|c| c.get("name").and_then(Value::as_str).map(|s| !s.trim().is_empty()).unwrap_or(false));
+        items.retain(|c| {
+            c.get("name")
+                .and_then(Value::as_str)
+                .map(|s| !s.trim().is_empty())
+                .unwrap_or(false)
+        });
     }
 }
 
@@ -512,7 +714,10 @@ fn lenient_extraction(value: &Value) -> SegmentExtraction {
         .get("spatial")
         .and_then(|t| serde_json::from_value::<Spatial>(t.clone()).ok());
     SegmentExtraction {
-        chapter_index: value.get("chapter_index").and_then(Value::as_i64).unwrap_or(0),
+        chapter_index: value
+            .get("chapter_index")
+            .and_then(Value::as_i64)
+            .unwrap_or(0),
         chapter_title: get_str("chapter_title").unwrap_or_default(),
         narrative_perspective: get_str("narrative_perspective"),
         temporal,
@@ -547,7 +752,8 @@ fn split_chunks(text: &str, target: usize) -> Vec<String> {
             }
             continue;
         }
-        if current.chars().count() + para.chars().count() + 1 > target && !current.trim().is_empty() {
+        if current.chars().count() + para.chars().count() + 1 > target && !current.trim().is_empty()
+        {
             chunks.push(current.trim().to_string());
             current = String::new();
         }
@@ -572,7 +778,12 @@ fn hard_split(text: &str, target: usize) -> Vec<String> {
         .collect()
 }
 
-fn build_user_prompt(chapter: &ParsedChapter, chunk_index: usize, chunk_total: usize, text: &str) -> String {
+fn build_user_prompt(
+    chapter: &ParsedChapter,
+    chunk_index: usize,
+    chunk_total: usize,
+    text: &str,
+) -> String {
     format!(
         "【章节序号】{}\n【章节标题】{}\n【分块】{}/{}\n\n【正文】\n{}\n\n请严格按系统提示的 JSON schema 输出该分块的抽取结果，只返回 JSON。",
         chapter.chapter_index,
@@ -700,10 +911,14 @@ pub const SYSTEM_PROMPT: &str = r#"你是一个中文小说叙事结构分析引
 5. world 不要强行套用“界”之类的词，贴合原文语境即可。
 6. 所有自然语言字段（人物名、地点、角色、描述、用途、摘要、raw_marker、reference_anchor 等）使用【简体中文】输出；仅 JSON 的键名与机器枚举值（如 CONTINUOUS / FIRST_APPEARANCE / ITEM）保持英文。
 7. 专有名词保留原文写法，不要翻译或音译。
-8. 输出务必精简完整：plot_summary ≤ 40 字；description / role / usage_in_chapter 各 ≤ 20 字。避免冗长导致 JSON 被截断。
-9. importance 只能填 1–5 的整数，依据【原文】中该人物的戏份、推动剧情的作用与出场频率判断；同一人物在不同分块中应尽量给出一致的值。
-10. 人物列表要尽量完整：列出本段中所有具名人物（包括次要人物、只被提及但未直接出场者），不要只列主角。名字必须能在本段正文中找到，避免捏造。
-11. 空间字段只填写原文明确出现的地名/世界名；原文没有明确的世界名时，world 留空字符串，不要自行补“现实世界”“现代世界”等标签。
+8. 输出务必精简完整：plot_summary ≤ 50 字，须包含本章最关键的人物/地点/事件；description / role / usage_in_chapter 各 ≤ 24 字。避免冗长导致 JSON 被截断。
+9. importance 只能填 1–5 的整数，依据原文中该人物的戏份、推动剧情的作用、出场频率与跨度判断；若本段信息有限，按本段估计即可，应用会在全书范围再做校准。同一人物在不同分块中应尽量给出一致的值；只被提及一两次的人物填 1–2。
+10. 人物列表要尽量完整：列出本段中所有具名人物，包括主角、配角、反派、家人、同门、下属，以及只被提及但未直接出场者。名字必须能在本段正文中找到，避免捏造。
+11. 不要把人名列成作者、译者、序言作者、插图作者等现实身份；也不要把“众人/士兵/弟子”等无名群体或“他/她”等代词当作人物。
+12. 同一人物只输出一次：绰号、尊称、道号、简称、别名一律归并到本段最规范的全名，不要因称谓不同拆成多个人物。
+13. role 尽量写清具体身份或关系（如“韩立的师父”“青云门弟子”“反派首领”），不要只写“角色”“人物”“未知”。
+14. 空间字段只填写原文明确出现的地名/世界名；原文没有明确的世界名时，world 留空字符串，不要自行补“现实世界”“现代世界”“某城市”等标签。region/site 同理，只取原文。
+15. 物品/功法只列本段实际出现或明确被提及者；名称用原文写法，category 按 ITEM / SKILL / LEGACY 三选一。
 
 再次强调：只返回 **一个** 合法 JSON 对象，从 `{` 开始、到 `}` 结束，不要有任何其它字符。
 "#;
@@ -776,7 +991,10 @@ mod tests {
         let (ext, repaired) = parse_extraction(&payload).unwrap();
         assert!(!repaired);
         assert_eq!(ext.chapter_index, 12);
-        assert_eq!(ext.temporal.as_ref().unwrap().relative_delta_days, Some(1095));
+        assert_eq!(
+            ext.temporal.as_ref().unwrap().relative_delta_days,
+            Some(1095)
+        );
         assert_eq!(ext.spatial.as_ref().unwrap().world.as_deref(), Some("人界"));
         assert_eq!(ext.characters.len(), 1);
         assert_eq!(ext.characters[0].action, "FIRST_APPEARANCE");
@@ -785,8 +1003,7 @@ mod tests {
 
     #[test]
     fn parse_extraction_repairs_trailing_comma() {
-        let broken =
-            r#"{"chapter_index":1,"characters":[{"name":"韩立"}],"items_and_skills":[],}"#;
+        let broken = r#"{"chapter_index":1,"characters":[{"name":"韩立"}],"items_and_skills":[],}"#;
         let (ext, repaired) = parse_extraction(broken).unwrap();
         assert!(repaired);
         assert_eq!(ext.characters.len(), 1);
@@ -837,7 +1054,10 @@ mod tests {
 
     #[test]
     fn extract_json_block_handles_array_and_trailing_text() {
-        assert_eq!(extract_json_block("结果：[ {\"a\":1}, {\"b\":2} ] 完").unwrap(), "{\"a\":1}");
+        assert_eq!(
+            extract_json_block("结果：[ {\"a\":1}, {\"b\":2} ] 完").unwrap(),
+            "{\"a\":1}"
+        );
         assert_eq!(
             extract_json_block("{\"temporal\":{\"type\":\"CONTINUOUS\"}}尾").unwrap(),
             "{\"temporal\":{\"type\":\"CONTINUOUS\"}}"
@@ -864,7 +1084,8 @@ mod tests {
     #[test]
     fn parse_extraction_repairs_raw_control_chars() {
         // 字符串内直接包含换行/制表符（未转义）——小模型常见错误。
-        let broken = "{\"plot_summary\":\"第一行\n第二行\t结束\",\"characters\":[],\"items_and_skills\":[]}";
+        let broken =
+            "{\"plot_summary\":\"第一行\n第二行\t结束\",\"characters\":[],\"items_and_skills\":[]}";
         let (ext, repaired) = parse_extraction(broken).unwrap();
         assert!(repaired);
         assert!(ext.plot_summary.contains("第一行"));
@@ -889,7 +1110,10 @@ mod tests {
         let dropped = ground_entries(&mut ext, text);
         assert_eq!(dropped, 2);
         assert_eq!(ext.characters.len(), 2);
-        assert!(ext.characters.iter().any(|c| c.name == "PROTAGONIST_FIRST_PERSON"));
+        assert!(ext
+            .characters
+            .iter()
+            .any(|c| c.name == "PROTAGONIST_FIRST_PERSON"));
         assert_eq!(ext.items_and_skills.len(), 1);
         assert_eq!(ext.items_and_skills[0].name, "掌天瓶");
     }
@@ -913,5 +1137,39 @@ mod tests {
         let chunks = chapter_chunks(text, 0);
         assert_eq!(chunks.len(), 1);
         assert_eq!(chunks[0], text);
+    }
+
+    #[test]
+    fn pack_summary_lines_keeps_order_and_budget() {
+        let lines = vec![
+            "第 1 章：甲".to_string(),
+            "第 2 章：乙".to_string(),
+            "第 3 章：丙".to_string(),
+        ];
+        let batches = pack_summary_lines(&lines, 200);
+        assert_eq!(batches.len(), 1);
+        assert!(batches[0].contains("第 1 章"));
+        assert!(batches[0].contains("第 3 章"));
+
+        let long = vec!["甲".repeat(150), "乙".repeat(150), "丙".repeat(150)];
+        let batches = pack_summary_lines(&long, 200);
+        assert_eq!(batches.len(), 3);
+        assert!(batches.iter().all(|b| b.chars().count() <= 200));
+    }
+
+    #[test]
+    fn parse_summary_output_handles_json_and_plain_text() {
+        assert_eq!(
+            parse_summary_output("{\"summary\":\"全书总览\"}").as_deref(),
+            Some("全书总览")
+        );
+        assert_eq!(
+            parse_summary_output("```json\n{\"summary\":\"带围栏\"}\n```").as_deref(),
+            Some("带围栏")
+        );
+        assert_eq!(
+            parse_summary_output("直接输出的总览").as_deref(),
+            Some("直接输出的总览")
+        );
     }
 }

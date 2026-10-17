@@ -74,7 +74,10 @@ mod tests {
         std::env::set_var(key, "/tmp/chronospace-test-override");
 
         assert_eq!(data_dir(), PathBuf::from("/tmp/chronospace-test-override"));
-        assert_eq!(db_path(), PathBuf::from("/tmp/chronospace-test-override/chronospace.sqlite3"));
+        assert_eq!(
+            db_path(),
+            PathBuf::from("/tmp/chronospace-test-override/chronospace.sqlite3")
+        );
         assert_eq!(
             llm_config_path(),
             PathBuf::from("/tmp/chronospace-test-override/llm_config.json")

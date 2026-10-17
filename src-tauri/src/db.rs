@@ -116,6 +116,9 @@ impl Db {
         if !columns.iter().any(|c| c == "content_sig") {
             conn.execute("ALTER TABLE books ADD COLUMN content_sig TEXT", [])?;
         }
+        if !columns.iter().any(|c| c == "summary") {
+            conn.execute("ALTER TABLE books ADD COLUMN summary TEXT", [])?;
+        }
 
         let mut entity_columns: Vec<String> = Vec::new();
         {
@@ -146,7 +149,14 @@ impl Db {
         conn.execute(
             "INSERT INTO books (title, author, format, total_chapters, source_path, content_sig)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![title, author, format, total_chapters, source_path, content_sig],
+            params![
+                title,
+                author,
+                format,
+                total_chapters,
+                source_path,
+                content_sig
+            ],
         )?;
         Ok(conn.last_insert_rowid())
     }
@@ -160,6 +170,30 @@ impl Db {
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .map_err(Into::into)
+    }
+
+    /// 按章节序号批量修正标题（用于修复旧版本把书名写进章节标题的数据）。
+    pub fn update_chapter_titles(&self, book_id: i64, titles: &[(i64, String)]) -> AppResult<()> {
+        let mut conn = self.conn.lock();
+        let tx = conn.transaction()?;
+        for (chapter_index, title) in titles {
+            tx.execute(
+                "UPDATE chapters SET title = ?1 WHERE book_id = ?2 AND chapter_index = ?3",
+                params![title, book_id, chapter_index],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// 保存全书总览。
+    pub fn set_book_summary(&self, book_id: i64, summary: &str) -> AppResult<()> {
+        let conn = self.conn.lock();
+        conn.execute(
+            "UPDATE books SET summary = ?1 WHERE id = ?2",
+            params![summary, book_id],
+        )?;
+        Ok(())
     }
 
     /// 更新书籍的源文件路径与内容签名（重新定位源文件时使用）。
@@ -420,7 +454,7 @@ impl Db {
         let mut stmt = conn.prepare(
             "SELECT b.id, b.title, b.author, b.format, b.total_chapters, b.created_at,
                     (SELECT COUNT(DISTINCT n.chapter_id) FROM spatiotemporal_nodes n WHERE n.book_id = b.id),
-                    b.source_path
+                    b.source_path, b.summary
              FROM books b ORDER BY b.created_at DESC",
         )?;
         let rows = stmt
@@ -434,6 +468,7 @@ impl Db {
                     created_at: r.get(5)?,
                     extracted_chapters: r.get(6)?,
                     source_path: r.get(7)?,
+                    summary: r.get(8)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -445,7 +480,7 @@ impl Db {
         conn.query_row(
             "SELECT b.id, b.title, b.author, b.format, b.total_chapters, b.created_at,
                     (SELECT COUNT(DISTINCT n.chapter_id) FROM spatiotemporal_nodes n WHERE n.book_id = b.id),
-                    b.source_path
+                    b.source_path, b.summary
              FROM books b WHERE b.id = ?1",
             params![book_id],
             |r| {
@@ -458,6 +493,7 @@ impl Db {
                     created_at: r.get(5)?,
                     extracted_chapters: r.get(6)?,
                     source_path: r.get(7)?,
+                    summary: r.get(8)?,
                 })
             },
         )
@@ -479,9 +515,19 @@ impl Db {
             "DELETE FROM entity_events WHERE chapter_id IN (SELECT id FROM chapters WHERE book_id = ?1)",
             params![book_id],
         )?;
-        tx.execute("DELETE FROM spatiotemporal_nodes WHERE book_id = ?1", params![book_id])?;
+        tx.execute(
+            "DELETE FROM spatiotemporal_nodes WHERE book_id = ?1",
+            params![book_id],
+        )?;
         tx.execute("DELETE FROM entities WHERE book_id = ?1", params![book_id])?;
-        tx.execute("UPDATE chapters SET raw_text_summary = NULL WHERE book_id = ?1", params![book_id])?;
+        tx.execute(
+            "UPDATE chapters SET raw_text_summary = NULL WHERE book_id = ?1",
+            params![book_id],
+        )?;
+        tx.execute(
+            "UPDATE books SET summary = NULL WHERE id = ?1",
+            params![book_id],
+        )?;
         tx.commit()?;
         Ok(())
     }
@@ -667,11 +713,16 @@ mod tests {
     #[test]
     fn schema_persist_and_read_back() {
         let db = Db::open_in_memory().unwrap();
-        let book_id = db.insert_book("测试书", Some("作者甲"), "EPUB", 1, None, None).unwrap();
-        let ch_id = db.insert_chapter(book_id, 0, "第一章", "hash123", None).unwrap();
+        let book_id = db
+            .insert_book("测试书", Some("作者甲"), "EPUB", 1, None, None)
+            .unwrap();
+        let ch_id = db
+            .insert_chapter(book_id, 0, "第一章", "hash123", None)
+            .unwrap();
         assert!(!db.chapter_extracted(ch_id).unwrap());
 
-        db.persist_extraction(book_id, ch_id, &sample_extraction()).unwrap();
+        db.persist_extraction(book_id, ch_id, &sample_extraction())
+            .unwrap();
         assert!(db.chapter_extracted(ch_id).unwrap());
 
         let bundle = db.timeline_bundle(book_id).unwrap();
@@ -689,7 +740,10 @@ mod tests {
         assert_eq!(hanli.entity_type, "CHARACTER");
         assert_eq!(hanli.first_appeared_chapter_index, Some(0));
         assert_eq!(hanli.importance, Some(5));
-        assert!(bundle.entities.iter().any(|e| e.name == "掌天瓶" && e.entity_type == "ITEM"));
+        assert!(bundle
+            .entities
+            .iter()
+            .any(|e| e.name == "掌天瓶" && e.entity_type == "ITEM"));
         assert_eq!(bundle.events.len(), 2);
 
         let books = db.list_books().unwrap();
@@ -702,7 +756,8 @@ mod tests {
         let db = Db::open_in_memory().unwrap();
         let book_id = db.insert_book("B", None, "MOBI", 1, None, None).unwrap();
         let ch_id = db.insert_chapter(book_id, 0, "c0", "h", None).unwrap();
-        db.persist_extraction(book_id, ch_id, &sample_extraction()).unwrap();
+        db.persist_extraction(book_id, ch_id, &sample_extraction())
+            .unwrap();
 
         db.delete_book(book_id).unwrap();
         assert!(db.list_books().unwrap().is_empty());
@@ -716,8 +771,14 @@ mod tests {
         let db = Db::open_in_memory().unwrap();
         let book_id = db.insert_book("B", None, "EPUB", 1, None, None).unwrap();
         let ch_id = db.insert_chapter(book_id, 0, "c0", "h", None).unwrap();
-        db.persist_extraction(book_id, ch_id, &sample_extraction()).unwrap();
+        db.persist_extraction(book_id, ch_id, &sample_extraction())
+            .unwrap();
+        db.set_book_summary(book_id, "全书总览").unwrap();
         assert_eq!(db.get_entities(book_id).unwrap().len(), 2);
+        assert_eq!(
+            db.get_book(book_id).unwrap().summary.as_deref(),
+            Some("全书总览")
+        );
 
         db.clear_book_extraction(book_id).unwrap();
         assert!(db.get_entities(book_id).unwrap().is_empty());
@@ -728,6 +789,20 @@ mod tests {
         let chs = db.get_chapters(book_id).unwrap();
         assert_eq!(chs.len(), 1);
         assert!(chs[0].raw_text_summary.is_none());
+        assert!(db.get_book(book_id).unwrap().summary.is_none());
+    }
+
+    #[test]
+    fn chapter_titles_can_be_repaired() {
+        let db = Db::open_in_memory().unwrap();
+        let book_id = db.insert_book("书名", None, "EPUB", 2, None, None).unwrap();
+        db.insert_chapter(book_id, 0, "书名", "h1", None).unwrap();
+        db.insert_chapter(book_id, 1, "书名", "h2", None).unwrap();
+        db.update_chapter_titles(book_id, &[(0, "第一章 起".into()), (1, "第二章 落".into())])
+            .unwrap();
+        let chapters = db.get_chapters(book_id).unwrap();
+        assert_eq!(chapters[0].title, "第一章 起");
+        assert_eq!(chapters[1].title, "第二章 落");
     }
 
     #[test]
@@ -740,7 +815,8 @@ mod tests {
             db.book_source(id).unwrap(),
             (Some("/tmp/a.epub".to_string()), Some("sig-a".to_string()))
         );
-        db.update_book_source(id, Some("/tmp/b.epub"), Some("sig-b")).unwrap();
+        db.update_book_source(id, Some("/tmp/b.epub"), Some("sig-b"))
+            .unwrap();
         assert_eq!(
             db.book_source(id).unwrap(),
             (Some("/tmp/b.epub".to_string()), Some("sig-b".to_string()))
@@ -752,7 +828,9 @@ mod tests {
         let db = Db::open_in_memory().unwrap();
         let book_id = db.insert_book("B", None, "EPUB", 1, None, None).unwrap();
         let a = db.insert_chapter(book_id, 0, "t", "h1", None).unwrap();
-        let b = db.insert_chapter(book_id, 0, "t-again", "h2", None).unwrap();
+        let b = db
+            .insert_chapter(book_id, 0, "t-again", "h2", None)
+            .unwrap();
         assert_eq!(a, b);
         assert_eq!(db.get_chapters(book_id).unwrap().len(), 1);
     }

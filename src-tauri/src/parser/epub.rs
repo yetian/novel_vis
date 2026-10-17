@@ -1,4 +1,4 @@
-use super::util::{guess_title, hash_text, strip_html};
+use super::util::{guess_title_with_book, hash_text, strip_html};
 use crate::error::{AppError, AppResult};
 use crate::models::{BookCandidate, ParsedBook, ParsedChapter};
 use quick_xml::events::{BytesStart, Event};
@@ -71,7 +71,8 @@ pub fn parse(bytes: &[u8], fallback_title: &str) -> AppResult<ParsedBook> {
         if text.chars().count() < 20 {
             continue;
         }
-        let chapter_title = extract_html_title(&xhtml).unwrap_or_else(|| guess_title(&text, idx));
+        let chapter_title = extract_html_title(&xhtml, Some(&title))
+            .unwrap_or_else(|| guess_title_with_book(&text, idx, Some(&title)));
         chapters.push(ParsedChapter {
             chapter_index: idx,
             title: chapter_title,
@@ -434,37 +435,117 @@ fn find_rootfile(container_xml: &[u8]) -> Option<String> {
     None
 }
 
-fn extract_html_title(xhtml: &str) -> Option<String> {
-    for tag in ["<title>", "<h1", "<h2", "<h3"] {
-        if let Some(start) = xhtml.find(tag) {
-            let after = &xhtml[start..];
-            if let Some(close) = after.find('>') {
-                let rest = &after[close + 1..];
-                let window = char_boundary_prefix(rest, 400);
-                if let Some(end) = window.find('<') {
-                    let candidate = strip_html(&rest[..end]);
-                    let trimmed = candidate.trim();
-                    if !trimmed.is_empty() && trimmed.chars().count() <= 60 {
-                        return Some(trimmed.to_string());
-                    }
-                }
+fn extract_html_title(xhtml: &str, book_title: Option<&str>) -> Option<String> {
+    // 章节文件里的 <title> 经常是书名，优先读取正文标题（h1/h2/h3）。
+    // 同一文件可能同时有“卷名”和“章名”，按标题形态选出更像章节的标题。
+    let lower = xhtml.to_ascii_lowercase();
+    let mut headings = Vec::new();
+    for (open, close) in [("<h1", "</h1>"), ("<h2", "</h2>"), ("<h3", "</h3>")] {
+        if let Some(text) = find_tag_text(xhtml, &lower, open, close) {
+            if let Some(title) = normalize_chapter_title(&text, book_title) {
+                headings.push(title);
             }
         }
+    }
+    if !headings.is_empty() {
+        let mut best: Option<(i32, String)> = None;
+        for title in headings {
+            let score = heading_score(&title);
+            if best
+                .as_ref()
+                .map_or(true, |(best_score, _)| score > *best_score)
+            {
+                best = Some((score, title));
+            }
+        }
+        if let Some((_, title)) = best {
+            return Some(title);
+        }
+    }
+
+    if let Some(text) = find_tag_text(xhtml, &lower, "<title", "</title>") {
+        return normalize_chapter_title(&text, book_title);
     }
     None
 }
 
-/// 返回字符串的前 `max` 字节切片，并保证落在 UTF-8 字符边界上。
-/// 直接使用 `&s[..max]` 在多字节字符（如中文）处会 panic。
-fn char_boundary_prefix(s: &str, max: usize) -> &str {
-    if s.len() <= max {
-        return s;
+fn find_tag_text(xhtml: &str, lower: &str, open: &str, close: &str) -> Option<String> {
+    let start = lower.find(open)?;
+    let gt_rel = lower[start..].find('>')?;
+    let inner_start = start + gt_rel + 1;
+    let end_rel = lower[inner_start..].find(close)?;
+    let inner = &xhtml[inner_start..inner_start + end_rel];
+    Some(strip_html(inner))
+}
+
+fn heading_score(title: &str) -> i32 {
+    let t = title.trim();
+    if t.is_empty() {
+        return -1;
     }
-    let mut end = max;
-    while end > 0 && !s.is_char_boundary(end) {
-        end -= 1;
+    if t.starts_with('第')
+        && (t.contains('章') || t.contains('回') || t.contains('节') || t.contains('话'))
+    {
+        return 4;
     }
-    &s[..end]
+    if [
+        "序", "楔子", "引子", "前言", "后记", "尾声", "终章", "番外", "外传", "结局",
+    ]
+    .iter()
+    .any(|p| t.starts_with(p))
+    {
+        return 3;
+    }
+    if t.starts_with('第') && (t.contains('卷') || t.contains('部') || t.contains('篇')) {
+        return 1;
+    }
+    let lower = t.to_lowercase();
+    if lower.starts_with("chapter")
+        || lower.starts_with("prologue")
+        || lower.starts_with("epilogue")
+    {
+        return 3;
+    }
+    0
+}
+
+/// 清洗标题：去掉“书名 - 第一章”“第一章 | 书名”等书名前后缀；纯书名视为无标题。
+fn normalize_chapter_title(candidate: &str, book_title: Option<&str>) -> Option<String> {
+    let title = candidate.trim();
+    if title.is_empty() || title.chars().count() > 60 {
+        return None;
+    }
+    let Some(book_title) = book_title.map(str::trim).filter(|t| !t.is_empty()) else {
+        return Some(title.to_string());
+    };
+    let book_key = title_key(book_title);
+    if title_key(title) == book_key {
+        return None;
+    }
+    for sep in [" - ", " – ", " — ", " | ", "·", "_", "：", ":"] {
+        let Some((left, right)) = title.split_once(sep) else {
+            continue;
+        };
+        let left = left.trim();
+        let right = right.trim();
+        if left.is_empty() || right.is_empty() {
+            continue;
+        }
+        if title_key(left) == book_key {
+            return Some(right.to_string());
+        }
+        if title_key(right) == book_key {
+            return Some(left.to_string());
+        }
+    }
+    Some(title.to_string())
+}
+
+fn title_key(s: &str) -> String {
+    s.chars()
+        .filter(|c| !c.is_whitespace())
+        .collect::<String>()
+        .to_lowercase()
 }
 
 fn attr_value(e: &BytesStart, name: &str) -> Option<String> {
@@ -670,12 +751,56 @@ mod tests {
     #[test]
     fn extract_html_title_reads_heading_and_title_tag() {
         assert_eq!(
-            extract_html_title("<html><body><h1>第一章 起</h1><p>x</p></body></html>").as_deref(),
+            extract_html_title("<html><body><h1>第一章 起</h1><p>x</p></body></html>", None)
+                .as_deref(),
             Some("第一章 起")
         );
         assert_eq!(
-            extract_html_title("<head><title>书名 · 第一章</title></head>").as_deref(),
+            extract_html_title("<head><title>书名 · 第一章</title></head>", None).as_deref(),
             Some("书名 · 第一章")
+        );
+    }
+
+    #[test]
+    fn extract_html_title_prefers_chapter_heading_over_book_title() {
+        let xhtml =
+            "<html><head><title>测试之书</title></head><body><h1>第一章 起</h1></body></html>";
+        assert_eq!(
+            extract_html_title(xhtml, Some("测试之书")).as_deref(),
+            Some("第一章 起")
+        );
+    }
+
+    #[test]
+    fn extract_html_title_skips_book_title_and_splits_combined_titles() {
+        assert_eq!(
+            extract_html_title("<head><title>测试之书</title></head>", Some("测试之书")),
+            None
+        );
+        assert_eq!(
+            extract_html_title(
+                "<head><title>测试之书 - 第二章 落</title></head>",
+                Some("测试之书")
+            )
+            .as_deref(),
+            Some("第二章 落")
+        );
+        assert_eq!(
+            extract_html_title(
+                "<head><title>第三章 归 | 测试之书</title></head>",
+                Some("测试之书")
+            )
+            .as_deref(),
+            Some("第三章 归")
+        );
+    }
+
+    #[test]
+    fn extract_html_title_prefers_chapter_over_volume_heading() {
+        let xhtml = "<body><h1>第一卷 风起</h1><h2>第一章 入山</h2></body>";
+        assert_eq!(
+            extract_html_title(xhtml, Some("测试之书")).as_deref(),
+            Some("第一章 入山")
         );
     }
 
@@ -683,15 +808,6 @@ mod tests {
     fn extract_html_title_does_not_panic_on_long_multibyte() {
         // 修复前：在字节 400 处切片，而 400 落在多字节字符「雾」内部 -> panic。
         let xhtml = format!("<h1>{}</h1>", "雾".repeat(300));
-        assert!(extract_html_title(&xhtml).is_none());
-    }
-
-    #[test]
-    fn char_boundary_prefix_respects_utf8() {
-        let s = "雾".repeat(300); // 每个字符 3 字节
-        let cut = char_boundary_prefix(&s, 400);
-        assert_eq!(cut.len(), 399);
-        assert!(s.is_char_boundary(cut.len()));
-        assert_eq!(char_boundary_prefix("短", 100), "短");
+        assert!(extract_html_title(&xhtml, None).is_none());
     }
 }

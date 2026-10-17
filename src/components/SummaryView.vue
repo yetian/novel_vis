@@ -1,15 +1,163 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
+import { api } from "@/api/tauri";
 import { useLibraryStore } from "@/stores/library";
+import { useLlmStore } from "@/stores/llm";
+import { useUiStore } from "@/stores/ui";
+import { chapterHeading } from "@/utils/chapter";
+import { errText } from "@/utils/error";
+import { computeImportance, importanceLabel } from "@/utils/people";
 import { cleanPlace, cleanWorld } from "@/utils/space";
+import type { ChapterRow, EntityEventRow, EntityRow } from "@/types/schema";
 
 const library = useLibraryStore();
+const llm = useLlmStore();
+const ui = useUiStore();
 const query = ref("");
+const generating = ref(false);
 
 const timeline = computed(() => library.timeline);
 const chapters = computed(() => timeline.value?.chapters ?? []);
 const entities = computed(() => timeline.value?.entities ?? []);
+const events = computed(() => timeline.value?.events ?? []);
 const book = computed(() => timeline.value?.book ?? library.activeBook);
+
+const characterEntities = computed(() => entities.value.filter((e) => e.entity_type === "CHARACTER"));
+const characterIds = computed(() => new Set(characterEntities.value.map((e) => e.id)));
+const entityById = computed(() => new Map(entities.value.map((e) => [e.id, e])));
+
+const eventsByChar = computed(() => {
+  const m = new Map<number, EntityEventRow[]>();
+  for (const ev of events.value) {
+    const list = m.get(ev.entity_id) ?? [];
+    list.push(ev);
+    m.set(ev.entity_id, list);
+  }
+  return m;
+});
+
+const roleByChar = computed(() => {
+  const counts = new Map<number, Map<string, number>>();
+  for (const ev of events.value) {
+    if (!ev.role) continue;
+    let m = counts.get(ev.entity_id);
+    if (!m) {
+      m = new Map<string, number>();
+      counts.set(ev.entity_id, m);
+    }
+    m.set(ev.role, (m.get(ev.role) ?? 0) + 1);
+  }
+  const result = new Map<number, string>();
+  for (const [id, m] of counts) {
+    const best = [...m.entries()].sort((a, b) => b[1] - a[1])[0];
+    if (best) result.set(id, best[0]);
+  }
+  return result;
+});
+
+/// 全书重要度：与「人物关系」页保持同一套公式。
+const importanceById = computed(() => {
+  const maxEvents = characterEntities.value.reduce(
+    (max, e) => Math.max(max, (eventsByChar.value.get(e.id) ?? []).length),
+    1,
+  );
+  const totalChapters = Math.max(1, chapters.value.length);
+  const totalSpan = Math.max(1, chapters.value.length - 1);
+  const result = new Map<number, number>();
+  for (const entity of characterEntities.value) {
+    const evs = eventsByChar.value.get(entity.id) ?? [];
+    const chapterSet = new Set(evs.map((e) => e.chapter_index));
+    let first = entity.first_appeared_chapter_index ?? null;
+    let last = first;
+    for (const ev of evs) {
+      if (first == null || ev.chapter_index < first) first = ev.chapter_index;
+      if (last == null || ev.chapter_index > last) last = ev.chapter_index;
+    }
+    const span = first != null && last != null ? Math.max(0, last - first) : 0;
+    const explicit =
+      entity.importance != null && entity.importance >= 1 && entity.importance <= 5
+        ? Math.round(entity.importance)
+        : null;
+    result.set(
+      entity.id,
+      computeImportance({
+        explicit,
+        coverage: chapterSet.size / totalChapters,
+        volume: evs.length / maxEvents,
+        spanRatio: span / totalSpan,
+        role: roleByChar.value.get(entity.id),
+      }),
+    );
+  }
+  return result;
+});
+
+const firstByChapter = computed(() => {
+  const m = new Map<number, EntityRow[]>();
+  for (const e of characterEntities.value) {
+    if (e.first_appeared_chapter_index == null) continue;
+    const list = m.get(e.first_appeared_chapter_index) ?? [];
+    list.push(e);
+    m.set(e.first_appeared_chapter_index, list);
+  }
+  for (const list of m.values()) {
+    list.sort(
+      (a, b) =>
+        (importanceById.value.get(b.id) ?? 1) - (importanceById.value.get(a.id) ?? 1) ||
+        a.name.localeCompare(b.name),
+    );
+  }
+  return m;
+});
+
+/// 本章主要人物：按全书重要度 + 本章事件数排序；首次登场者单列，避免重复。
+const mainByChapter = computed(() => {
+  const byChapter = new Map<number, Map<number, number>>();
+  for (const ev of events.value) {
+    if (!characterIds.value.has(ev.entity_id)) continue;
+    let m = byChapter.get(ev.chapter_index);
+    if (!m) {
+      m = new Map<number, number>();
+      byChapter.set(ev.chapter_index, m);
+    }
+    m.set(ev.entity_id, (m.get(ev.entity_id) ?? 0) + 1);
+  }
+
+  const result = new Map<
+    number,
+    { entity: EntityRow; importance: number; role: string; count: number }[]
+  >();
+  for (const c of chapters.value) {
+    const counts = byChapter.get(c.chapter_index);
+    if (!counts?.size) continue;
+    const firstIds = new Set(
+      (firstByChapter.value.get(c.chapter_index) ?? []).map((e) => e.id),
+    );
+    const list = [...counts.entries()]
+      .map(([id, count]) => {
+        const entity = entityById.value.get(id);
+        return entity
+          ? {
+              entity,
+              importance: importanceById.value.get(id) ?? 1,
+              role: roleByChar.value.get(id) ?? "",
+              count,
+            }
+          : null;
+      })
+      .filter((x): x is { entity: EntityRow; importance: number; role: string; count: number } => !!x)
+      .filter((x) => !firstIds.has(x.entity.id))
+      .sort(
+        (a, b) =>
+          b.importance - a.importance ||
+          b.count - a.count ||
+          a.entity.name.localeCompare(b.entity.name),
+      )
+      .slice(0, 6);
+    if (list.length) result.set(c.chapter_index, list);
+  }
+  return result;
+});
 
 const stats = computed(() => {
   const summarized = chapters.value.filter((c) => (c.raw_text_summary || "").trim()).length;
@@ -18,30 +166,68 @@ const stats = computed(() => {
   );
   return {
     summarized,
-    characters: entities.value.filter((e) => e.entity_type === "CHARACTER").length,
+    characters: characterEntities.value.length,
     items: entities.value.filter((e) => e.entity_type !== "CHARACTER").length,
     locations: locations.size,
   };
 });
 
-const firstAppearByChapter = computed(() => {
-  const m = new Map<number, string[]>();
-  for (const e of entities.value) {
-    if (e.entity_type !== "CHARACTER" || e.first_appeared_chapter_index == null) continue;
-    const list = m.get(e.first_appeared_chapter_index) ?? [];
-    list.push(e.name);
-    m.set(e.first_appeared_chapter_index, list);
-  }
-  return m;
+const allExtracted = computed(() => {
+  const b = book.value;
+  return !!b && b.total_chapters > 0 && (b.extracted_chapters ?? 0) >= b.total_chapters;
 });
 
 const rows = computed(() => {
   const q = query.value.trim();
   if (!q) return chapters.value;
-  return chapters.value.filter((c) =>
-    [c.title, c.raw_text_summary, c.world, c.region, c.site].some((v) => (v || "").includes(q)),
+  return chapters.value.filter(
+    (c) =>
+      [
+        c.title,
+        c.raw_text_summary,
+        c.world,
+        c.region,
+        c.site,
+        ...(mainByChapter.value.get(c.chapter_index) ?? []).map((p) => p.entity.name),
+        ...(firstByChapter.value.get(c.chapter_index) ?? []).map((p) => p.name),
+      ].some((v) => (v || "").includes(q)),
   );
 });
+
+const firstList = (chapterIndex: number) => firstByChapter.value.get(chapterIndex) ?? [];
+
+const chapterHeadingOf = (c: ChapterRow) => chapterHeading(c, book.value?.title);
+
+const locationText = (c: ChapterRow) =>
+  [cleanPlace(c.site) || cleanPlace(c.region) || cleanWorld(c.world), cleanWorld(c.world)]
+    .filter(Boolean)
+    .filter((v, i, arr) => arr.indexOf(v) === i)
+    .join(" · ");
+
+const importanceChipClass = (n: number) => {
+  if (n >= 5) return "border-gold-400/60 bg-gold-400/10 text-gold-300";
+  if (n >= 4) return "border-jade-500/50 bg-jade-500/10 text-jade-300";
+  if (n >= 3) return "border-sky-400/40 bg-sky-400/5 text-sky-300";
+  return "border-ink-500 bg-ink-900/40 text-slate-300";
+};
+
+async function generateSummary() {
+  if (!book.value || generating.value) return;
+  if (!llm.config.model) {
+    ui.toast("请先在「引擎设置」中选择模型", "error");
+    return;
+  }
+  generating.value = true;
+  try {
+    await api.generateBookSummary(book.value.id, llm.config);
+    await library.reloadTimeline();
+    ui.toast("全书总览已生成", "success");
+  } catch (e) {
+    ui.toast(`全书总览生成失败：${errText(e)}`, "error");
+  } finally {
+    generating.value = false;
+  }
+}
 </script>
 
 <template>
@@ -68,7 +254,7 @@ const rows = computed(() => {
               共 {{ chapters.length }} 章 · 已生成摘要 {{ stats.summarized }} 章
             </p>
           </div>
-          <input v-model="query" class="input max-w-xs !py-1.5 text-xs" placeholder="搜索章节 / 摘要 / 地点…" />
+          <input v-model="query" class="input max-w-xs !py-1.5 text-xs" placeholder="搜索章节 / 摘要 / 人物 / 地点…" />
         </div>
 
         <div class="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-5">
@@ -95,6 +281,38 @@ const rows = computed(() => {
         </div>
       </header>
 
+      <!-- 全书总览 -->
+      <section class="panel p-5">
+        <div class="flex flex-wrap items-center gap-2">
+          <h3 class="text-sm font-semibold text-slate-100">
+            <i class="fa-solid fa-book-open mr-1 text-gold-400" />全书总览
+          </h3>
+          <span v-if="book?.summary" class="text-[11px] text-slate-500">全书抽取完成后自动生成</span>
+          <button
+            v-if="allExtracted && !generating"
+            class="btn-ghost ml-auto !px-2 !py-1 text-xs"
+            :disabled="!book?.summary && generating"
+            @click="generateSummary"
+          >
+            <i class="fa-solid" :class="book?.summary ? 'fa-rotate' : 'fa-wand-magic-sparkles'" />
+            {{ book?.summary ? "重新生成" : "生成全书总览" }}
+          </button>
+          <span v-else-if="generating" class="ml-auto text-xs text-gold-400">
+            <i class="fa-solid fa-spinner fa-spin mr-1" />生成中…
+          </span>
+        </div>
+
+        <p v-if="book?.summary" class="mt-3 whitespace-pre-line text-sm leading-relaxed text-slate-300">
+          {{ book.summary }}
+        </p>
+        <p v-else-if="allExtracted" class="mt-2 text-sm text-slate-500">
+          抽取已完成，可点击右上角生成全书总览；生成后会显示在这里。
+        </p>
+        <p v-else class="mt-2 text-sm text-slate-500">
+          完成全书抽取后，将自动汇总主线、关键人物与世界/空间信息。
+        </p>
+      </section>
+
       <div class="space-y-2">
         <p v-if="!rows.length" class="panel px-4 py-6 text-center text-sm text-slate-500">没有匹配的章节。</p>
 
@@ -109,15 +327,17 @@ const rows = computed(() => {
             >
               第 {{ c.chapter_index + 1 }} 章
             </span>
-            <h3 class="min-w-0 truncate text-sm font-semibold text-slate-100">{{ c.title || "未命名章节" }}</h3>
+            <h3
+              v-if="chapterHeadingOf(c)"
+              class="min-w-0 truncate text-sm font-semibold text-slate-100"
+            >
+              {{ chapterHeadingOf(c) }}
+            </h3>
             <span
-              v-if="c.site || c.region || c.world"
+              v-if="locationText(c)"
               class="rounded-full border border-gold-400/40 px-2 py-0.5 text-[10px] text-gold-400"
             >
-              <i class="fa-solid fa-location-dot mr-1" />{{
-                cleanPlace(c.site) || cleanPlace(c.region) || cleanWorld(c.world)
-              }}<template v-if="cleanWorld(c.world) && (cleanPlace(c.site) || cleanPlace(c.region))">
-                · {{ cleanWorld(c.world) }}</template>
+              <i class="fa-solid fa-location-dot mr-1" />{{ locationText(c) }}
             </span>
             <span
               v-if="c.temporal_type && c.temporal_type !== 'CONTINUOUS' && c.temporal_type !== 'UNCERTAIN'"
@@ -137,18 +357,43 @@ const rows = computed(() => {
             {{ c.raw_text_summary || "（尚未生成摘要）" }}
           </p>
 
-          <div
-            v-if="firstAppearByChapter.get(c.chapter_index)?.length"
-            class="mt-2 flex flex-wrap items-center gap-1"
-          >
-            <span class="text-[11px] text-slate-500">首次登场</span>
-            <span
-              v-for="name in firstAppearByChapter.get(c.chapter_index)"
-              :key="name"
-              class="rounded-full border border-jade-500/40 bg-jade-500/10 px-2 py-0.5 text-[10px] text-jade-300"
+          <div class="mt-2 space-y-1.5">
+            <div
+              v-if="mainByChapter.get(c.chapter_index)?.length"
+              class="flex flex-wrap items-center gap-1"
             >
-              {{ name }}
-            </span>
+              <span class="text-[11px] text-slate-500">本章主要人物</span>
+              <span
+                v-for="p in mainByChapter.get(c.chapter_index)"
+                :key="p.entity.id"
+                class="rounded-full border px-2 py-0.5 text-[10px]"
+                :class="importanceChipClass(p.importance)"
+                :title="`${importanceLabel(p.importance)}${p.role ? ` · ${p.role}` : ''} · 本章 ${p.count} 次事件`"
+              >
+                {{ p.entity.name }}
+              </span>
+            </div>
+
+            <div
+              v-if="firstList(c.chapter_index).length"
+              class="flex flex-wrap items-center gap-1"
+            >
+              <span class="text-[11px] text-slate-500">首次登场</span>
+              <span
+                v-for="p in firstList(c.chapter_index).slice(0, 12)"
+                :key="p.id"
+                class="rounded-full border border-jade-500/40 bg-jade-500/10 px-2 py-0.5 text-[10px] text-jade-300"
+                :title="`${importanceLabel(importanceById.get(p.id) ?? 1)}${p.description ? ` · ${p.description}` : ''}`"
+              >
+                {{ p.name }}
+              </span>
+              <span
+                v-if="firstList(c.chapter_index).length > 12"
+                class="self-center text-[10px] text-slate-500"
+              >
+                +{{ firstList(c.chapter_index).length - 12 }}
+              </span>
+            </div>
           </div>
         </article>
       </div>

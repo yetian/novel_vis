@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import { useLibraryStore } from "@/stores/library";
+import { chapterHeading } from "@/utils/chapter";
 import { cleanPlace, cleanWorld } from "@/utils/space";
 import type { ChapterRow, EntityEventRow, EntityRow } from "@/types/schema";
 
@@ -9,6 +10,7 @@ const tab = ref<"spaces" | "things">("spaces");
 const query = ref("");
 
 const timeline = computed(() => library.timeline);
+const book = computed(() => timeline.value?.book ?? library.activeBook);
 const chapters = computed(() => timeline.value?.chapters ?? []);
 const entities = computed(() => timeline.value?.entities ?? []);
 const events = computed(() => timeline.value?.events ?? []);
@@ -34,6 +36,9 @@ interface SpaceAgg {
   chapters: number[];
   chars: Set<number>;
   items: Set<number>;
+  charCounts: Map<number, number>;
+  itemCounts: Map<number, number>;
+  eventCount: number;
   firstChapter: number;
   lastChapter: number;
 }
@@ -55,6 +60,9 @@ const spaces = computed<SpaceAgg[]>(() => {
         chapters: [],
         chars: new Set(),
         items: new Set(),
+        charCounts: new Map(),
+        itemCounts: new Map(),
+        eventCount: 0,
         firstChapter: c.chapter_index,
         lastChapter: c.chapter_index,
       };
@@ -69,13 +77,25 @@ const spaces = computed<SpaceAgg[]>(() => {
     const key = chapterSpace.get(ev.chapter_index);
     if (key) {
       const s = map.get(key);
-      if (s) (ent.entity_type === "CHARACTER" ? s.chars : s.items).add(ev.entity_id);
+      if (s) {
+        s.eventCount += 1;
+        if (ent.entity_type === "CHARACTER") {
+          s.chars.add(ev.entity_id);
+          s.charCounts.set(ev.entity_id, (s.charCounts.get(ev.entity_id) ?? 0) + 1);
+        } else {
+          s.items.add(ev.entity_id);
+          s.itemCounts.set(ev.entity_id, (s.itemCounts.get(ev.entity_id) ?? 0) + 1);
+        }
+      }
     }
     if (ev.acquired_site) {
       const acq = cleanPlace(ev.acquired_site);
       if (acq) {
         for (const s of map.values()) {
-          if (acq.includes(s.site) || s.site.includes(acq)) s.items.add(ev.entity_id);
+          if (acq.includes(s.site) || s.site.includes(acq)) {
+            s.items.add(ev.entity_id);
+            s.itemCounts.set(ev.entity_id, (s.itemCounts.get(ev.entity_id) ?? 0) + 1);
+          }
         }
       }
     }
@@ -128,7 +148,10 @@ const charsByChapter = computed(() => {
 interface ThingAgg {
   entity: EntityRow;
   count: number;
+  chapterCount: number;
   firstChapter: ChapterRow | null;
+  lastChapter: ChapterRow | null;
+  acquireChapter: ChapterRow | null;
   acquiredSite: string;
   usage: string;
   related: string[];
@@ -141,9 +164,11 @@ const things = computed<ThingAgg[]>(() => {
       const evs = eventsByEntity.value.get(entity.id) ?? [];
       const acquire =
         evs.find((e) => e.action_type === "ACQUIRE") ?? evs.find((e) => e.acquired_site) ?? evs[0];
+      const chapterSet = new Set(evs.map((e) => e.chapter_index));
       const firstIndex =
         entity.first_appeared_chapter_index ??
         (evs.length ? Math.min(...evs.map((e) => e.chapter_index)) : null);
+      const lastIndex = evs.length ? Math.max(...evs.map((e) => e.chapter_index)) : firstIndex;
 
       const relatedIds = new Set<number>();
       for (const ev of evs) {
@@ -157,7 +182,11 @@ const things = computed<ThingAgg[]>(() => {
       return {
         entity,
         count: evs.length,
+        chapterCount: chapterSet.size,
         firstChapter: firstIndex != null ? chapterByIndex.value.get(firstIndex) ?? null : null,
+        lastChapter: lastIndex != null ? chapterByIndex.value.get(lastIndex) ?? null : null,
+        acquireChapter:
+          acquire != null ? chapterByIndex.value.get(acquire.chapter_index) ?? null : null,
         acquiredSite: cleanPlace(acquire?.acquired_site),
         usage: acquire?.impact_detail || entity.description || "",
         related,
@@ -205,6 +234,12 @@ const spaceSubtitle = (s: SpaceAgg) =>
   [s.world, s.region].filter(Boolean).join(" · ");
 const firstLocation = (c: ChapterRow | null) =>
   c ? cleanPlace(c.site) || cleanPlace(c.region) || cleanWorld(c.world) : "";
+const headingOf = (c?: ChapterRow | null) => (c ? chapterHeading(c, book.value?.title) : "");
+
+const sortedByCount = (ids: Set<number>, counts: Map<number, number>) =>
+  [...ids].sort(
+    (a, b) => (counts.get(b) ?? 0) - (counts.get(a) ?? 0) || nameOf(a).localeCompare(nameOf(b)),
+  );
 </script>
 
 <template>
@@ -225,7 +260,7 @@ const firstLocation = (c: ChapterRow | null) =>
             <i class="fa-solid fa-layer-group mr-1 text-jade-500" />空间与物品总览
           </h2>
           <p class="text-[11px] text-slate-500">
-            空间 {{ spaces.length }} · 物品/功法 {{ things.length }} · 空间按出现章节数排序，物品按出现次数排序
+            空间 {{ spaces.length }} · 物品/功法 {{ things.length }} · 空间按章节数/事件数排序，物品按出现次数排序
           </p>
         </div>
 
@@ -261,9 +296,9 @@ const firstLocation = (c: ChapterRow | null) =>
               <th class="w-12 px-3 py-2 font-medium">#</th>
               <th class="min-w-[180px] px-3 py-2 font-medium">空间</th>
               <th class="min-w-[160px] px-3 py-2 font-medium">首次出现</th>
-              <th class="min-w-[130px] px-3 py-2 font-medium">出现</th>
-              <th class="min-w-[220px] px-3 py-2 font-medium">人物</th>
-              <th class="min-w-[220px] px-3 py-2 font-medium">物品 / 功法</th>
+              <th class="min-w-[190px] px-3 py-2 font-medium">出现 / 最近</th>
+              <th class="min-w-[230px] px-3 py-2 font-medium">人物</th>
+              <th class="min-w-[230px] px-3 py-2 font-medium">物品 / 功法</th>
             </tr>
           </thead>
           <tbody>
@@ -284,26 +319,38 @@ const firstLocation = (c: ChapterRow | null) =>
 
               <td class="px-3 py-2.5 text-xs">
                 <div class="text-slate-300">第 {{ s.firstChapter + 1 }} 章</div>
-                <div class="truncate text-[11px] text-slate-500" :title="chapterByIndex.get(s.firstChapter)?.title">
-                  {{ chapterByIndex.get(s.firstChapter)?.title || "未命名章节" }}
+                <div
+                  v-if="headingOf(chapterByIndex.get(s.firstChapter))"
+                  class="truncate text-[11px] text-slate-500"
+                  :title="headingOf(chapterByIndex.get(s.firstChapter))"
+                >
+                  {{ headingOf(chapterByIndex.get(s.firstChapter)) }}
                 </div>
               </td>
 
               <td class="px-3 py-2.5 text-xs">
-                <div class="text-slate-300">{{ s.chapters.length }} 章</div>
+                <div class="text-slate-300">{{ s.chapters.length }} 章 · {{ s.eventCount }} 次事件</div>
                 <div class="text-[10px] text-slate-600">
                   首次 {{ s.firstChapter + 1 }} · 最近 {{ s.lastChapter + 1 }}
+                </div>
+                <div
+                  v-if="headingOf(chapterByIndex.get(s.lastChapter))"
+                  class="truncate text-[10px] text-slate-500"
+                  :title="headingOf(chapterByIndex.get(s.lastChapter))"
+                >
+                  {{ headingOf(chapterByIndex.get(s.lastChapter)) }}
                 </div>
               </td>
 
               <td class="px-3 py-2.5">
                 <div v-if="s.chars.size" class="flex flex-wrap gap-1">
                   <span
-                    v-for="id in [...s.chars].slice(0, 8)"
+                    v-for="id in sortedByCount(s.chars, s.charCounts).slice(0, 8)"
                     :key="id"
                     class="rounded-full border border-jade-500/30 bg-jade-500/5 px-2 py-0.5 text-[10px] text-jade-300"
+                    :title="`在本空间出场 ${s.charCounts.get(id) ?? 0} 次`"
                   >
-                    {{ nameOf(id) }}
+                    {{ nameOf(id) }}<span class="ml-0.5 text-slate-500">{{ s.charCounts.get(id) ?? 0 }}</span>
                   </span>
                   <span v-if="s.chars.size > 8" class="self-center text-[10px] text-slate-500">
                     +{{ s.chars.size - 8 }}
@@ -315,11 +362,12 @@ const firstLocation = (c: ChapterRow | null) =>
               <td class="px-3 py-2.5">
                 <div v-if="s.items.size" class="flex flex-wrap gap-1">
                   <span
-                    v-for="id in [...s.items].slice(0, 8)"
+                    v-for="id in sortedByCount(s.items, s.itemCounts).slice(0, 8)"
                     :key="id"
                     class="rounded-full border border-gold-400/30 bg-gold-400/5 px-2 py-0.5 text-[10px] text-gold-400"
+                    :title="`在本空间出现 ${s.itemCounts.get(id) ?? 0} 次`"
                   >
-                    {{ nameOf(id) }}
+                    {{ nameOf(id) }}<span class="ml-0.5 text-slate-500">{{ s.itemCounts.get(id) ?? 0 }}</span>
                   </span>
                   <span v-if="s.items.size > 8" class="self-center text-[10px] text-slate-500">
                     +{{ s.items.size - 8 }}
@@ -375,8 +423,8 @@ const firstLocation = (c: ChapterRow | null) =>
               <td class="px-3 py-2.5 text-xs">
                 <template v-if="t.firstChapter">
                   <div class="text-slate-300">第 {{ t.firstChapter.chapter_index + 1 }} 章</div>
-                  <div class="truncate text-[11px] text-slate-500" :title="t.firstChapter.title">
-                    {{ t.firstChapter.title || "未命名章节" }}
+                  <div v-if="headingOf(t.firstChapter)" class="truncate text-[11px] text-slate-500" :title="headingOf(t.firstChapter)">
+                    {{ headingOf(t.firstChapter) }}
                   </div>
                   <div v-if="firstLocation(t.firstChapter)" class="mt-0.5 text-[10px] text-gold-400">
                     <i class="fa-solid fa-location-dot mr-1" />{{ firstLocation(t.firstChapter) }}
@@ -390,6 +438,10 @@ const firstLocation = (c: ChapterRow | null) =>
                   <i class="fa-solid fa-location-dot mr-1" />{{ t.acquiredSite }}
                 </span>
                 <span v-else class="text-slate-600">—</span>
+                <div v-if="t.acquireChapter" class="mt-0.5 text-[10px] text-slate-500">
+                  第 {{ t.acquireChapter.chapter_index + 1 }} 章
+                  <template v-if="headingOf(t.acquireChapter)"> · {{ headingOf(t.acquireChapter) }}</template>
+                </div>
               </td>
 
               <td class="px-3 py-2.5 text-xs leading-relaxed text-slate-400">
@@ -412,7 +464,13 @@ const firstLocation = (c: ChapterRow | null) =>
                 <span v-else class="text-xs text-slate-600">—</span>
               </td>
 
-              <td class="px-3 py-2.5 text-xs text-slate-300">{{ t.count }} 次</td>
+              <td class="px-3 py-2.5 text-xs">
+                <div class="text-slate-300">{{ t.count }} 次</div>
+                <div class="text-[10px] text-slate-600">{{ t.chapterCount }} 章</div>
+                <div v-if="t.lastChapter" class="mt-0.5 text-[10px] text-slate-500">
+                  最近 {{ t.lastChapter.chapter_index + 1 }} 章
+                </div>
+              </td>
             </tr>
           </tbody>
         </table>

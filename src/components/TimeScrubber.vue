@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { computed } from "vue";
+import { chapterHeading } from "@/utils/chapter";
 import { cleanPlace, cleanWorld } from "@/utils/space";
 import type { ChapterRow } from "@/types/schema";
 
 const props = defineProps<{
   chapters: ChapterRow[];
   modelValue: number;
+  bookTitle?: string | null;
 }>();
 const emit = defineEmits<{ (e: "update:modelValue", value: number): void }>();
 
@@ -23,6 +25,9 @@ const maxDays = computed(() => cumulativeDays.value[cumulativeDays.value.length 
 const virtualDays = computed(() => cumulativeDays.value[props.modelValue] ?? 0);
 
 const currentChapter = computed(() => props.chapters[props.modelValue]);
+const currentHeading = computed(() =>
+  currentChapter.value ? chapterHeading(currentChapter.value, props.bookTitle) : "",
+);
 const currentPlace = computed(() => {
   const c = currentChapter.value;
   if (!c) return "";
@@ -85,7 +90,10 @@ function onTimeInput(e: Event) {
     </div>
 
     <div v-if="currentChapter" class="mt-1 flex flex-wrap items-center gap-2 text-[11px]">
-      <span class="text-gold-400">第 {{ currentChapter.chapter_index + 1 }} 章 · {{ currentChapter.title }}</span>
+      <span class="text-gold-400">
+        第 {{ currentChapter.chapter_index + 1 }} 章
+        <template v-if="currentHeading"> · {{ currentHeading }}</template>
+      </span>
       <span v-if="currentPlace" class="rounded-full border border-gold-400/40 px-2 py-0.5 text-gold-400">
         <i class="fa-solid fa-location-dot mr-1" />{{ currentPlace }}
         <template v-if="cleanWorld(currentChapter.world)"> · {{ cleanWorld(currentChapter.world) }}</template>

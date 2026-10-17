@@ -12,6 +12,7 @@ const selectedEntityId = ref<number | null>(null);
 const selectedSite = ref<SiteSelection | null>(null);
 
 const timeline = computed(() => library.timeline);
+const book = computed(() => timeline.value?.book ?? library.activeBook);
 const chapters = computed(() => timeline.value?.chapters ?? []);
 const entities = computed(() => timeline.value?.entities ?? []);
 const events = computed(() => timeline.value?.events ?? []);
@@ -39,14 +40,18 @@ const siteMeta = computed(() => {
     return false;
   });
   const evs = events.value.filter((e) => indexes.has(e.chapter_index));
-  const chars = entities.value.filter(
-    (e) => e.entity_type === "CHARACTER" && evs.some((v) => v.entity_id === e.id),
-  );
-  const items = entities.value.filter(
-    (e) =>
-      e.entity_type !== "CHARACTER" &&
-      (evs.some((v) => v.entity_id === e.id) || evs.some((v) => v.acquired_site?.includes(site))),
-  );
+  const counts = new Map<number, number>();
+  for (const ev of evs) counts.set(ev.entity_id, (counts.get(ev.entity_id) ?? 0) + 1);
+  const chars = entities.value
+    .filter((e) => e.entity_type === "CHARACTER" && counts.has(e.id))
+    .sort((a, b) => (counts.get(b.id) ?? 0) - (counts.get(a.id) ?? 0) || a.name.localeCompare(b.name));
+  const items = entities.value
+    .filter(
+      (e) =>
+        e.entity_type !== "CHARACTER" &&
+        (counts.has(e.id) || evs.some((v) => v.acquired_site?.includes(site))),
+    )
+    .sort((a, b) => (counts.get(b.id) ?? 0) - (counts.get(a.id) ?? 0) || a.name.localeCompare(b.name));
   const temporals = siteChapters
     .filter((c) => c.temporal_type && c.temporal_type !== "CONTINUOUS" && c.temporal_type !== "UNCERTAIN")
     .map((c) => ({ index: c.chapter_index, type: c.temporal_type as string, days: c.time_offset_days ?? 0 }));
@@ -57,6 +62,8 @@ const siteMeta = computed(() => {
     chapters: siteChapters,
     chars,
     items,
+    counts,
+    eventCount: evs.length,
     temporals,
   };
 });
@@ -76,7 +83,7 @@ function seek(chapterIndex: number) {
 </script>
 
 <template>
-  <div class="h-full">
+  <div class="h-full min-h-0">
     <div v-if="!timeline || !chapters.length" class="grid h-full place-items-center p-8">
       <div class="max-w-md text-center">
         <div class="mx-auto mb-4 grid h-16 w-16 place-items-center rounded-2xl bg-ink-700 text-2xl text-slate-500">
@@ -90,7 +97,7 @@ function seek(chapterIndex: number) {
     </div>
 
     <div v-else class="flex h-full min-h-0 flex-col">
-      <div class="flex min-w-0 flex-1 flex-col">
+      <div class="flex min-h-0 min-w-0 flex-1 flex-col">
           <div class="relative min-h-0 flex-1">
             <SpaceGraph
               :chapters="chapters"
@@ -107,16 +114,18 @@ function seek(chapterIndex: number) {
             <transition name="fade">
               <div
                 v-if="siteMeta"
-                class="absolute right-3 top-3 w-72 overflow-hidden rounded-xl border border-ink-500/60 bg-ink-800/90 shadow-xl backdrop-blur"
+                class="absolute right-3 top-3 flex max-h-[calc(100%-1.5rem)] w-72 flex-col overflow-hidden rounded-xl border border-ink-500/60 bg-ink-800/90 shadow-xl backdrop-blur"
               >
-                <div class="flex items-start gap-2 border-b border-ink-600/60 px-4 py-3">
+                <div class="flex shrink-0 items-start gap-2 border-b border-ink-600/60 px-4 py-3">
                   <i class="fa-solid fa-location-dot mt-0.5 text-jade-400" />
                   <div class="min-w-0 flex-1">
                     <h4 class="truncate font-semibold text-slate-100">{{ siteMeta.site }}</h4>
-                    <p v-if="siteMeta.world || siteMeta.region" class="text-[11px] text-slate-500">
+                    <p class="text-[11px] text-slate-500">
                       <template v-if="siteMeta.world">{{ siteMeta.world }}</template>
                       <template v-if="siteMeta.world && siteMeta.region"> · </template>
                       <template v-if="siteMeta.region">{{ siteMeta.region }}</template>
+                      <template v-if="siteMeta.world || siteMeta.region"> · </template>
+                      {{ siteMeta.chapters.length }} 章 · {{ siteMeta.eventCount }} 次事件
                     </p>
                   </div>
                   <button class="text-slate-500 hover:text-slate-200" @click="selectedSite = null">
@@ -124,7 +133,7 @@ function seek(chapterIndex: number) {
                   </button>
                 </div>
 
-                <div class="max-h-[22rem] space-y-3 overflow-y-auto px-4 py-3 text-xs">
+                <div class="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-3 text-xs">
                   <div>
                     <div class="mb-1 text-[11px] uppercase tracking-wide text-slate-500">出现章节 ({{ siteMeta.chapters.length }})</div>
                     <div class="flex flex-wrap gap-1">
@@ -151,10 +160,10 @@ function seek(chapterIndex: number) {
                         v-for="p in siteMeta.chars"
                         :key="p.id"
                         class="rounded-full border border-jade-500/40 bg-jade-500/10 px-2 py-0.5 text-[11px] text-jade-300 transition hover:border-jade-400 hover:bg-jade-500/20"
-                        :title="p.description || '点击查看人物谱系'"
+                        :title="`${p.description || '点击查看人物谱系'} · 本空间 ${siteMeta.counts.get(p.id) ?? 0} 次事件`"
                         @click="selectedEntityId = p.id"
                       >
-                        {{ p.name }}
+                        {{ p.name }}<span class="ml-1 text-slate-500">{{ siteMeta.counts.get(p.id) ?? 0 }}</span>
                       </button>
                     </div>
                   </div>
@@ -166,10 +175,10 @@ function seek(chapterIndex: number) {
                         v-for="it in siteMeta.items"
                         :key="it.id"
                         class="rounded-full border border-gold-400/40 bg-gold-400/10 px-2 py-0.5 text-[11px] text-gold-400 hover:border-gold-400"
-                        :title="it.description || ''"
+                        :title="`${it.description || ''} · 本空间 ${siteMeta.counts.get(it.id) ?? 0} 次事件`"
                         @click="selectedEntityId = it.id"
                       >
-                        {{ it.name }}
+                        {{ it.name }}<span class="ml-1 text-slate-500">{{ siteMeta.counts.get(it.id) ?? 0 }}</span>
                       </button>
                     </div>
                   </div>
@@ -193,14 +202,14 @@ function seek(chapterIndex: number) {
             </transition>
           </div>
 
-          <div class="p-3">
-            <TimeScrubber v-model="activeIndex" :chapters="chapters" />
+          <div class="shrink-0 p-3">
+            <TimeScrubber v-model="activeIndex" :chapters="chapters" :book-title="book?.title" />
           </div>
         </div>
 
       <!-- 实体谱系 -->
       <transition name="slide-up">
-        <div v-if="selectedEntity" class="border-t border-ink-600/60 bg-ink-800/70 p-4">
+        <div v-if="selectedEntity" class="max-h-[42vh] shrink-0 overflow-y-auto border-t border-ink-600/60 bg-ink-800/70 p-4">
           <div class="flex items-center gap-3">
             <i
               class="fa-solid"

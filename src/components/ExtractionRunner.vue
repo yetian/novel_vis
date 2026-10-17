@@ -4,6 +4,7 @@ import { useLibraryStore } from "@/stores/library";
 import { useExtractionStore, type BookJob } from "@/stores/extraction";
 import { useLlmStore } from "@/stores/llm";
 import { useUiStore } from "@/stores/ui";
+import { chapterLabel } from "@/utils/chapter";
 
 const library = useLibraryStore();
 const extraction = useExtractionStore();
@@ -25,6 +26,7 @@ const phaseLabel: Record<string, string> = {
   paused: "已暂停",
   skipped: "跳过",
   chapter_done: "章节完成",
+  summarizing: "汇总全书",
   finished: "已完成",
   cancelled: "已取消",
 };
@@ -137,7 +139,9 @@ async function cancel() {
         <span>
           <i class="fa-solid fa-circle-notch mr-1" :class="{ 'fa-spin': running }" />
           {{ job?.progress ? phaseLabel[job.progress.phase] || job.progress.phase : "待开始" }}
-          <span v-if="job?.progress?.chapter_title" class="text-slate-500">· {{ job.progress.chapter_title }}</span>
+          <span v-if="job?.progress?.chapter_title" class="text-slate-500">
+            · {{ chapterLabel({ title: job.progress.chapter_title, chapter_index: job.progress.chapter_index }, book?.title) }}
+          </span>
         </span>
         <span>{{ percent }}%</span>
       </div>

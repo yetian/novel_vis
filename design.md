@@ -1,6 +1,6 @@
 # ChronoSpace Reader · 架构设计蓝图（design.md）
 
-> 当前版本：**v0.1.22**
+> 当前版本：**v0.1.23**
 > 本文档描述系统架构、数据流、SQLite 关系模式、状态机、协议契约与 UI 组件层级，并与代码库保持同步。
 
 ---
@@ -146,6 +146,7 @@ erDiagram
     TEXT created_at
     TEXT source_path
     TEXT content_sig
+    TEXT summary
   }
   chapters {
     INTEGER id PK
@@ -241,11 +242,15 @@ erDiagram
 
 **视角归一化**：系统提示词要求判断 `first_person` / `third_person`；第一人称时把「我」解析为主角规范名，无法确定则使用 `PROTAGONIST_FIRST_PERSON` 并在 `description` 注明别名。
 
-**人物覆盖与重要度**：提示词要求尽可能列出本段所有具名人物（含次要/仅被提及者）。每个分块给出 `importance`（1–5），持久化时取较强值；前端再按**全书范围**用「模型判断 50% + 章节覆盖率 + 出场频率 + 时间跨度」汇总为最终 1–5 级并排序。作者署名与“作者”占位条目在 `get_entities` 查询中排除。
+**人物覆盖与重要度**：提示词要求尽可能列出本段所有具名人物（含次要/仅被提及者），同一人物的绰号/尊称归并到规范名；明确要求排除作者、译者、序言作者等现实身份，以及无名群体和代词。每个分块给出 `importance`（1–5），持久化时取较强值；前端再按**全书范围**用「模型判断 50% + 章节覆盖率 + 出场频率 + 时间跨度」汇总为最终 1–5 级并排序。作者署名与“作者”占位条目在 `get_entities` 查询中排除。
 
 **空间来源**：`world/region/site` 只允许来自原文；不再注入“现实世界/某城市”等提示词占位值。展示层会将旧数据中的“现实世界”“未知空间”等泛化标签视为空（`utils/space.ts`）。
 
-**题材无关与抗幻觉**：提示词不预设作品类型、不包含任何示例专有名词（避免小模型照搬示例造成「奇怪的人」）；`world` 允许现实语境（城市/年代/现实世界），不强制“界”类术语。抽取后由 `ground_entries` 按当前分块正文校验：人物/物品名若非本段正文子串则丢弃（`PROTAGONIST_FIRST_PERSON` 与单字名豁免），过滤数量通过日志事件上报。
+**题材无关与抗幻觉**：提示词不预设作品类型、不包含任何示例专有名词（避免小模型照搬示例造成「奇怪的人」）；`world/region/site` 也只取原文明确写出的名称，不强制“界”类术语，也不补“现实世界/某城市”等泛化标签。抽取后由 `ground_entries` 按当前分块正文校验：人物/物品名若非本段正文子串则丢弃（`PROTAGONIST_FIRST_PERSON` 与单字名豁免），过滤数量通过日志事件上报。
+
+**章题提取**：EPUB 章节优先读取正文 `h1/h2/h3`，并对“卷名 vs 章名”按标题形态打分（`第X章/回/节` 优先于 `第X卷/部/篇`）；`<title>` 仅在无正文标题时使用，且会剔除纯书名或“书名 - 章名”中的书名部分。MOBI/无目录场景用 `guess_title_with_book` 跳过书名行。旧数据在重新加载源文件时由 `repair_titles_if_unsplit` 自动修正。
+
+**全书总览**：整本书全部章节成功后，按章节摘要生成 `books.summary`。章节摘要总长超过 5000 字时先分批生成阶段摘要，再汇总为 300–500 字总览；失败只记日志，不影响抽取结果。旧数据可通过 `generate_book_summary` 手动生成。
 
 ---
 
@@ -306,7 +311,8 @@ sequenceDiagram
 | `activate_model` | `config: LlmConfig` | `string` | 卸载旧模型并预热加载当前模型（尽力而为），返回状态说明 |
 | `test_connection` | `config: LlmConfig` | `boolean` | 连通性探测 |
 | `gpu_status` | `config: LlmConfig` | `GpuStatus` | 显存占用与建议并发数（`nvidia-smi` + Ollama `/api/ps`，尽力而为） |
-| `start_extraction` | `request: ExtractionRequest` | `ChapterExtractionResult[]` | 批量抽取 |
+| `start_extraction` | `request: ExtractionRequest` | `ChapterExtractionResult[]` | 批量抽取；全部成功后自动生成全书总览 |
+| `generate_book_summary` | `bookId: number, config: LlmConfig` | `string` | 为已有抽取数据手动生成/刷新全书总览 |
 | `pause_extraction` / `resume_extraction` / `cancel_extraction` | `bookId: number` | `void` | 任务控制 |
 | `read_text_file` | `path: string` | `string` | 辅助读取 |
 
@@ -373,9 +379,9 @@ App.vue
 │   ├── SpacetimeCanvas.vue
 │   │   ├── SpaceGraph.vue          时间 × 空间矩阵：横轴章节、每行一个地点；人物首现圆点 + 跨时空轨迹 + 关系虚线 + 当前行高亮
 │   │   └── TimeScrubber.vue        章节轴 + 虚拟时间线双滑块 + 当前章节信息
-│   ├── SummaryView.vue       章节总览：逐章摘要 + 统计 + 首现人物/时空标签（点击书籍默认进入）
-│   ├── RelationGraph.vue     人物总览表：全书重要度排序，含首现章节/时空、简介、同章共现关系；排除作者
-│   ├── EntityCards.vue       空间 / 物品总览表（独立标签页，可搜索）
+│   ├── SummaryView.vue       总览：全书总览 + 逐章摘要 + 统计 + 本章主要人物/首现人物/时空标签（点击书籍默认进入）
+│   ├── RelationGraph.vue     人物总览表：全书重要度排序，含首现/最近出场、主要活动地、同章共现区间；排除作者
+│   ├── EntityCards.vue       空间 / 物品总览表：事件数、最近章节、按出场排序的人物、获得章节与关联人物
 │   └── LlmSettings.vue       引擎选择 · 模型探测 · 参数 · 连接测试 · 数据管理
 ├── ConfirmDialog.vue         全局确认框（ui.askConfirm）
 └── ToastHost.vue             全局通知

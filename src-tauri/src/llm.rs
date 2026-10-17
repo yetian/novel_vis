@@ -76,13 +76,14 @@ fn build_client(config: &LlmConfig) -> AppResult<reqwest::Client> {
 }
 
 fn endpoint(base: &str, path: &str) -> String {
-    format!("{}/{}", base.trim_end_matches('/'), path.trim_start_matches('/'))
+    format!(
+        "{}/{}",
+        base.trim_end_matches('/'),
+        path.trim_start_matches('/')
+    )
 }
 
-fn apply_auth(
-    req: reqwest::RequestBuilder,
-    config: &LlmConfig,
-) -> reqwest::RequestBuilder {
+fn apply_auth(req: reqwest::RequestBuilder, config: &LlmConfig) -> reqwest::RequestBuilder {
     match &config.api_key {
         Some(key) if !key.trim().is_empty() => req.bearer_auth(key.trim()),
         _ => req,
@@ -246,7 +247,9 @@ pub async fn health_check(config: &LlmConfig) -> AppResult<bool> {
 }
 
 fn ollama_root(base: &str) -> String {
-    base.trim_end_matches('/').trim_end_matches("/v1").to_string()
+    base.trim_end_matches('/')
+        .trim_end_matches("/v1")
+        .to_string()
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -388,7 +391,10 @@ pub async fn list_loaded_models(config: &LlmConfig) -> AppResult<Vec<ModelInfo>>
         _ => {
             // LM Studio 原生接口：/api/v0/models（若不可用则返回空）。
             let url = endpoint(
-                config.base_url.trim_end_matches('/').trim_end_matches("/v1"),
+                config
+                    .base_url
+                    .trim_end_matches('/')
+                    .trim_end_matches("/v1"),
                 "api/v0/models",
             );
             let resp = match client.get(&url).send().await {
@@ -468,12 +474,15 @@ pub async fn activate_model(config: &LlmConfig, previous: Option<&str>) -> AppRe
                 response_format: None,
                 format: None,
             };
-            let warmed = apply_auth(client.post(&endpoint(&config.base_url, "chat/completions")), config)
-                .json(&req)
-                .send()
-                .await
-                .map(|r| r.status().is_success())
-                .unwrap_or(false);
+            let warmed = apply_auth(
+                client.post(&endpoint(&config.base_url, "chat/completions")),
+                config,
+            )
+            .json(&req)
+            .send()
+            .await
+            .map(|r| r.status().is_success())
+            .unwrap_or(false);
             Ok(if warmed {
                 format!("已加载模型 {}", config.model)
             } else {

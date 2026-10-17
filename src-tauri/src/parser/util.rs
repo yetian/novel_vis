@@ -53,11 +53,21 @@ pub fn decode_entities(input: &str) -> String {
 }
 
 fn decode_one(entity: &str) -> Option<String> {
-    if let Some(num) = entity.strip_prefix("#x").or_else(|| entity.strip_prefix("#X")) {
-        return u32::from_str_radix(num, 16).ok().and_then(char::from_u32).map(|c| c.to_string());
+    if let Some(num) = entity
+        .strip_prefix("#x")
+        .or_else(|| entity.strip_prefix("#X"))
+    {
+        return u32::from_str_radix(num, 16)
+            .ok()
+            .and_then(char::from_u32)
+            .map(|c| c.to_string());
     }
     if let Some(num) = entity.strip_prefix('#') {
-        return num.parse::<u32>().ok().and_then(char::from_u32).map(|c| c.to_string());
+        return num
+            .parse::<u32>()
+            .ok()
+            .and_then(char::from_u32)
+            .map(|c| c.to_string());
     }
     let s = match entity {
         "amp" => "&",
@@ -92,9 +102,18 @@ pub fn hash_bytes(bytes: &[u8]) -> String {
 
 /// 从文本中猜测一个章节标题（用于无结构化目录的格式）。
 pub fn guess_title(text: &str, fallback_index: i64) -> String {
-    for line in text.lines().take(6) {
+    guess_title_with_book(text, fallback_index, None)
+}
+
+/// 与 `guess_title` 相同，但跳过等于书名的行，避免把书名当成章节名。
+pub fn guess_title_with_book(text: &str, fallback_index: i64, book_title: Option<&str>) -> String {
+    let book_key = book_title.map(|b| b.trim()).filter(|b| !b.is_empty());
+    for line in text.lines().take(8) {
         let t = line.trim();
         if t.is_empty() {
+            continue;
+        }
+        if book_key.is_some_and(|b| b == t) {
             continue;
         }
         if t.chars().count() <= 40 {
@@ -139,8 +158,14 @@ mod tests {
 
     #[test]
     fn decode_entities_named_and_numeric() {
-        assert_eq!(decode_entities("a &amp; b &#65; &#x42; &lt;"), "a & b A B <");
-        assert_eq!(decode_entities("&nbsp;引号&mdash;破折号&hellip;"), " 引号—破折号…");
+        assert_eq!(
+            decode_entities("a &amp; b &#65; &#x42; &lt;"),
+            "a & b A B <"
+        );
+        assert_eq!(
+            decode_entities("&nbsp;引号&mdash;破折号&hellip;"),
+            " 引号—破折号…"
+        );
     }
 
     #[test]
@@ -157,5 +182,17 @@ mod tests {
     fn guess_title_prefers_chapter_heading_else_fallback() {
         assert_eq!(guess_title("第三章 风起\n正文内容", 0), "第三章 风起");
         assert_eq!(guess_title("没有标题的开头\n正文", 4), "第 5 章");
+    }
+
+    #[test]
+    fn guess_title_skips_book_title_line() {
+        assert_eq!(
+            guess_title_with_book("测试之书\n第一章 入山\n正文", 0, Some("测试之书")),
+            "第一章 入山"
+        );
+        assert_eq!(
+            guess_title_with_book("测试之书\n正文", 2, Some("测试之书")),
+            "第 3 章"
+        );
     }
 }

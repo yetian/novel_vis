@@ -43,6 +43,7 @@ pub fn run() {
             commands::test_connection,
             commands::gpu_status,
             commands::start_extraction,
+            commands::generate_book_summary,
             commands::pause_extraction,
             commands::resume_extraction,
             commands::cancel_extraction,

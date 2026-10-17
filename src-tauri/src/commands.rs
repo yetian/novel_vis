@@ -170,8 +170,25 @@ fn ensure_book_loaded(state: &AppState, book_id: i64) -> AppResult<()> {
         }
     }
     let parsed = parser::parse_book(&path, &bytes)?;
+    repair_titles_if_unsplit(state, book_id, &parsed);
     state.cache_book(book_id, parsed);
     Ok(())
+}
+
+/// 旧版本可能把书名写进章节标题；重新加载未拆分书籍的源文件时顺手修复。
+fn repair_titles_if_unsplit(state: &AppState, book_id: i64, parsed: &ParsedBook) {
+    let Ok(book) = state.db.get_book(book_id) else {
+        return;
+    };
+    if book.total_chapters != parsed.chapters.len() as i64 {
+        return;
+    }
+    let titles: Vec<(i64, String)> = parsed
+        .chapters
+        .iter()
+        .map(|c| (c.chapter_index, c.title.clone()))
+        .collect();
+    let _ = state.db.update_chapter_titles(book_id, &titles);
 }
 
 /// 查询引擎中当前已加载的模型。
@@ -182,10 +199,7 @@ pub async fn list_loaded_models(config: LlmConfig) -> AppResult<Vec<ModelInfo>> 
 
 /// 切换/激活模型：卸载旧模型并预热加载新模型（尽力而为）。
 #[tauri::command]
-pub async fn activate_model(
-    state: State<'_, AppState>,
-    config: LlmConfig,
-) -> AppResult<String> {
+pub async fn activate_model(state: State<'_, AppState>, config: LlmConfig) -> AppResult<String> {
     let previous = state.active_model.lock().clone();
     let message = llm::activate_model(&config, previous.as_deref()).await?;
     *state.active_model.lock() = Some(config.model.clone());
@@ -204,11 +218,37 @@ pub async fn start_extraction(
 
     let previous = state.active_model.lock().clone();
     if previous.as_deref() != Some(request.llm.model.as_str()) {
-        llm::activate_model(&request.llm, previous.as_deref()).await.ok();
+        llm::activate_model(&request.llm, previous.as_deref())
+            .await
+            .ok();
         *state.active_model.lock() = Some(request.llm.model.clone());
     }
 
     pipeline::run_extraction(app, &state, request).await
+}
+
+/// 为已完成抽取的旧数据手动生成/刷新全书总览。
+#[tauri::command]
+pub async fn generate_book_summary(
+    state: State<'_, AppState>,
+    book_id: i64,
+    config: LlmConfig,
+) -> AppResult<String> {
+    ensure_book_loaded(&state, book_id)?;
+    let book = state
+        .book(book_id)
+        .ok_or_else(|| AppError::Internal("书籍原文不在内存中，请重新导入后再试。".into()))?;
+    let summary = pipeline::summarize_book(
+        &config,
+        book_id,
+        &book.title,
+        book.author.as_deref(),
+        &state.db,
+    )
+    .await?
+    .ok_or_else(|| AppError::Internal("暂无章节摘要，无法生成全书总览".into()))?;
+    state.db.set_book_summary(book_id, &summary)?;
+    Ok(summary)
 }
 
 /// 重新定位并关联书籍的源文件。`force` 为真时允许关联内容不一致的文件。
@@ -232,7 +272,10 @@ pub async fn set_book_source(
         });
     }
 
-    state.db.update_book_source(book_id, Some(&path), Some(&new_sig))?;
+    state
+        .db
+        .update_book_source(book_id, Some(&path), Some(&new_sig))?;
+    repair_titles_if_unsplit(&state, book_id, &parsed);
     state.cache_book(book_id, parsed);
     Ok(SourceCheck {
         matched,
@@ -276,5 +319,7 @@ pub fn cancel_extraction(state: State<'_, AppState>, book_id: i64) -> AppResult<
 /// 读取文件为文本（供前端静态 HTML 导出时使用）。
 #[tauri::command]
 pub async fn read_text_file(path: String) -> AppResult<String> {
-    Ok(tokio::fs::read_to_string(path).await.map_err(AppError::from)?)
+    Ok(tokio::fs::read_to_string(path)
+        .await
+        .map_err(AppError::from)?)
 }

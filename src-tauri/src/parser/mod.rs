@@ -80,7 +80,8 @@ pub fn split_book(book: &ParsedBook, candidates: &[BookCandidate]) -> Vec<Parsed
     for candidate in candidates {
         let mut chapters = Vec::new();
         for ch in &book.chapters {
-            if ch.chapter_index >= candidate.start_index && ch.chapter_index <= candidate.end_index {
+            if ch.chapter_index >= candidate.start_index && ch.chapter_index <= candidate.end_index
+            {
                 covered.insert(ch.chapter_index);
                 let mut cloned = ch.clone();
                 cloned.chapter_index = chapters.len() as i64;
@@ -172,8 +173,18 @@ mod tests {
     fn split_book_partitions_and_reindexes() {
         let book = book_with(4);
         let candidates = vec![
-            BookCandidate { title: "上卷".into(), start_index: 0, end_index: 1, chapter_count: 2 },
-            BookCandidate { title: "下卷".into(), start_index: 2, end_index: 3, chapter_count: 2 },
+            BookCandidate {
+                title: "上卷".into(),
+                start_index: 0,
+                end_index: 1,
+                chapter_count: 2,
+            },
+            BookCandidate {
+                title: "下卷".into(),
+                start_index: 2,
+                end_index: 3,
+                chapter_count: 2,
+            },
         ];
         let parts = split_book(&book, &candidates);
         assert_eq!(parts.len(), 2);
@@ -198,8 +209,18 @@ mod tests {
         assert_eq!(split_book(&book, &candidates).len(), 1);
 
         let candidates = vec![
-            BookCandidate { title: "上卷".into(), start_index: 1, end_index: 1, chapter_count: 1 },
-            BookCandidate { title: "下卷".into(), start_index: 2, end_index: 2, chapter_count: 1 },
+            BookCandidate {
+                title: "上卷".into(),
+                start_index: 1,
+                end_index: 1,
+                chapter_count: 1,
+            },
+            BookCandidate {
+                title: "下卷".into(),
+                start_index: 2,
+                end_index: 2,
+                chapter_count: 1,
+            },
         ];
         let parts = split_book(&book, &candidates);
         assert_eq!(parts.len(), 3, "第 0 章应归入「其他」");
