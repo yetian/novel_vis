@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import { useLibraryStore } from "@/stores/library";
+import { cleanPlace, cleanWorld } from "@/utils/space";
+import type { ChapterRow, EntityEventRow, EntityRow } from "@/types/schema";
 
 const library = useLibraryStore();
 const tab = ref<"spaces" | "things">("spaces");
@@ -12,78 +14,201 @@ const entities = computed(() => timeline.value?.entities ?? []);
 const events = computed(() => timeline.value?.events ?? []);
 
 const entityById = computed(() => new Map(entities.value.map((e) => [e.id, e])));
-const worldOf = (w?: string | null) => w || "未知空间";
-const siteOf = (c: { world?: string | null; region?: string | null; site?: string | null }) =>
-  c.site || c.region || worldOf(c.world);
-const siteKey = (c: { world?: string | null; region?: string | null; site?: string | null }) =>
-  `${worldOf(c.world)}::${siteOf(c)}`;
+const chapterByIndex = computed(() => {
+  const m = new Map<number, ChapterRow>();
+  for (const c of chapters.value) m.set(c.chapter_index, c);
+  return m;
+});
 
-const spaces = computed(() => {
-  const chapterSite = new Map<number, string>();
-  const sites = new Map<
-    string,
-    { key: string; world: string; region: string | null; site: string; chapters: number[]; chars: Set<number>; items: Set<number> }
-  >();
+const worldOf = (w?: string | null) => cleanWorld(w);
+const siteOf = (c: { world?: string | null; region?: string | null; site?: string | null }) =>
+  cleanPlace(c.site) || cleanPlace(c.region) || worldOf(c.world) || "未标注空间";
+const spaceKey = (c: { world?: string | null; region?: string | null; site?: string | null }) =>
+  `${worldOf(c.world)}::${cleanPlace(c.region)}::${siteOf(c)}`;
+
+interface SpaceAgg {
+  key: string;
+  world: string;
+  region: string | null;
+  site: string;
+  chapters: number[];
+  chars: Set<number>;
+  items: Set<number>;
+  firstChapter: number;
+  lastChapter: number;
+}
+
+const spaces = computed<SpaceAgg[]>(() => {
+  const chapterSpace = new Map<number, string>();
+  const map = new Map<string, SpaceAgg>();
 
   for (const c of chapters.value) {
-    const key = siteKey(c);
-    chapterSite.set(c.chapter_index, key);
-    if (!sites.has(key)) {
-      sites.set(key, { key, world: worldOf(c.world), region: c.region ?? null, site: siteOf(c), chapters: [], chars: new Set(), items: new Set() });
+    const key = spaceKey(c);
+    chapterSpace.set(c.chapter_index, key);
+    let s = map.get(key);
+    if (!s) {
+      s = {
+        key,
+        world: worldOf(c.world),
+        region: cleanPlace(c.region) || null,
+        site: siteOf(c),
+        chapters: [],
+        chars: new Set(),
+        items: new Set(),
+        firstChapter: c.chapter_index,
+        lastChapter: c.chapter_index,
+      };
+      map.set(key, s);
     }
-    sites.get(key)!.chapters.push(c.chapter_index);
+    s.chapters.push(c.chapter_index);
   }
 
   for (const ev of events.value) {
     const ent = entityById.value.get(ev.entity_id);
     if (!ent) continue;
-    const key = chapterSite.get(ev.chapter_index);
+    const key = chapterSpace.get(ev.chapter_index);
     if (key) {
-      const s = sites.get(key)!;
-      if (ent.entity_type === "CHARACTER") s.chars.add(ev.entity_id);
-      else s.items.add(ev.entity_id);
+      const s = map.get(key);
+      if (s) (ent.entity_type === "CHARACTER" ? s.chars : s.items).add(ev.entity_id);
     }
     if (ev.acquired_site) {
-      for (const s of sites.values()) {
-        if (ev.acquired_site.includes(s.site)) s.items.add(ev.entity_id);
+      const acq = cleanPlace(ev.acquired_site);
+      if (acq) {
+        for (const s of map.values()) {
+          if (acq.includes(s.site) || s.site.includes(acq)) s.items.add(ev.entity_id);
+        }
       }
     }
   }
 
-  return [...sites.values()]
-    .map((s) => ({ ...s, chapters: s.chapters.sort((a, b) => a - b) }))
-    .sort((a, b) => b.chapters.length - a.chapters.length);
-});
-
-const things = computed(() => {
-  const nonChar = entities.value.filter((e) => e.entity_type !== "CHARACTER");
-  return nonChar
-    .map((it) => {
-      const evs = events.value.filter((e) => e.entity_id === it.id);
-      const acquire = evs.find((e) => e.action_type === "ACQUIRE") ?? evs[0];
+  return [...map.values()]
+    .map((s) => {
+      const indexes = [...s.chapters].sort((a, b) => a - b);
       return {
-        it,
-        count: evs.length,
-        site: acquire?.acquired_site ?? null,
-        usage: acquire?.impact_detail ?? it.description ?? null,
+        ...s,
+        chapters: indexes,
+        firstChapter: indexes[0] ?? s.firstChapter,
+        lastChapter: indexes[indexes.length - 1] ?? s.lastChapter,
       };
     })
-    .sort((a, b) => b.count - a.count);
+    .sort(
+      (a, b) =>
+        b.chapters.length - a.chapters.length ||
+        b.chars.size - a.chars.size ||
+        a.firstChapter - b.firstChapter,
+    );
 });
 
-const filteredSpaces = computed(() =>
-  spaces.value.filter((s) => (query.value ? (s.site + s.world + (s.region ?? "")).includes(query.value) : true)),
-);
-const filteredThings = computed(() =>
-  things.value.filter((t) => (query.value ? t.it.name.includes(query.value) : true)),
-);
+const eventsByEntity = computed(() => {
+  const m = new Map<number, EntityEventRow[]>();
+  for (const ev of events.value) {
+    const list = m.get(ev.entity_id) ?? [];
+    list.push(ev);
+    m.set(ev.entity_id, list);
+  }
+  return m;
+});
 
-const categoryLabel: Record<string, string> = { ITEM: "物品", SKILL: "功法", LEGACY: "传承" };
+/// 每章出现的具名人物，用于物品的“关联人物”。
+const charsByChapter = computed(() => {
+  const m = new Map<number, Set<number>>();
+  for (const ev of events.value) {
+    const ent = entityById.value.get(ev.entity_id);
+    if (!ent || ent.entity_type !== "CHARACTER") continue;
+    let set = m.get(ev.chapter_index);
+    if (!set) {
+      set = new Set<number>();
+      m.set(ev.chapter_index, set);
+    }
+    set.add(ev.entity_id);
+  }
+  return m;
+});
+
+interface ThingAgg {
+  entity: EntityRow;
+  count: number;
+  firstChapter: ChapterRow | null;
+  acquiredSite: string;
+  usage: string;
+  related: string[];
+}
+
+const things = computed<ThingAgg[]>(() => {
+  const nonChar = entities.value.filter((e) => e.entity_type !== "CHARACTER");
+  return nonChar
+    .map((entity) => {
+      const evs = eventsByEntity.value.get(entity.id) ?? [];
+      const acquire =
+        evs.find((e) => e.action_type === "ACQUIRE") ?? evs.find((e) => e.acquired_site) ?? evs[0];
+      const firstIndex =
+        entity.first_appeared_chapter_index ??
+        (evs.length ? Math.min(...evs.map((e) => e.chapter_index)) : null);
+
+      const relatedIds = new Set<number>();
+      for (const ev of evs) {
+        for (const id of charsByChapter.value.get(ev.chapter_index) ?? []) relatedIds.add(id);
+      }
+      const related = [...relatedIds]
+        .map((id) => entityById.value.get(id)?.name ?? "")
+        .filter(Boolean)
+        .slice(0, 8);
+
+      return {
+        entity,
+        count: evs.length,
+        firstChapter: firstIndex != null ? chapterByIndex.value.get(firstIndex) ?? null : null,
+        acquiredSite: cleanPlace(acquire?.acquired_site),
+        usage: acquire?.impact_detail || entity.description || "",
+        related,
+      };
+    })
+    .sort(
+      (a, b) =>
+        b.count - a.count ||
+        (a.firstChapter?.chapter_index ?? Number.MAX_SAFE_INTEGER) -
+          (b.firstChapter?.chapter_index ?? Number.MAX_SAFE_INTEGER) ||
+        a.entity.name.localeCompare(b.entity.name),
+    );
+});
+
 const nameOf = (id: number) => entityById.value.get(id)?.name ?? "";
+const categoryLabel: Record<string, string> = { ITEM: "物品", SKILL: "功法", LEGACY: "传承" };
+
+const filteredSpaces = computed(() => {
+  const q = query.value.trim();
+  if (!q) return spaces.value;
+  return spaces.value.filter(
+    (s) =>
+      s.site.includes(q) ||
+      s.world.includes(q) ||
+      (s.region || "").includes(q) ||
+      [...s.chars].some((id) => nameOf(id).includes(q)) ||
+      [...s.items].some((id) => nameOf(id).includes(q)),
+  );
+});
+
+const filteredThings = computed(() => {
+  const q = query.value.trim();
+  if (!q) return things.value;
+  return things.value.filter(
+    (t) =>
+      t.entity.name.includes(q) ||
+      (t.entity.description || "").includes(q) ||
+      t.usage.includes(q) ||
+      t.acquiredSite.includes(q) ||
+      t.related.some((n) => n.includes(q)),
+  );
+});
+
+const spaceSubtitle = (s: SpaceAgg) =>
+  [s.world, s.region].filter(Boolean).join(" · ");
+const firstLocation = (c: ChapterRow | null) =>
+  c ? cleanPlace(c.site) || cleanPlace(c.region) || cleanWorld(c.world) : "";
 </script>
 
 <template>
-  <div class="h-full overflow-y-auto p-6">
+  <div class="h-full overflow-hidden p-4">
     <div v-if="!timeline || !chapters.length" class="grid h-full place-items-center text-center text-slate-500">
       <div>
         <div class="mx-auto mb-4 grid h-16 w-16 place-items-center rounded-2xl bg-ink-700 text-2xl">
@@ -93,83 +218,211 @@ const nameOf = (id: number) => entityById.value.get(id)?.name ?? "";
       </div>
     </div>
 
-    <div v-else class="mx-auto max-w-6xl">
-      <div class="mb-5 flex flex-wrap items-center gap-3">
-        <div class="flex rounded-lg bg-ink-900/60 p-1">
-          <button
-            class="btn !px-4 !py-1.5"
-            :class="tab === 'spaces' ? 'bg-jade-500 text-ink-900' : 'text-slate-300 hover:bg-ink-600'"
-            @click="tab = 'spaces'"
-          >
-            <i class="fa-solid fa-mountain-sun" />空间地点 ({{ spaces.length }})
-          </button>
-          <button
-            class="btn !px-4 !py-1.5"
-            :class="tab === 'things' ? 'bg-gold-400 text-ink-900' : 'text-slate-300 hover:bg-ink-600'"
-            @click="tab = 'things'"
-          >
-            <i class="fa-solid fa-gem" />物品功法 ({{ things.length }})
+    <div v-else class="panel flex h-full min-h-0 flex-col overflow-hidden">
+      <header class="flex flex-wrap items-center gap-3 border-b border-ink-600/60 px-4 py-3">
+        <div class="min-w-0">
+          <h2 class="text-sm font-semibold text-slate-100">
+            <i class="fa-solid fa-layer-group mr-1 text-jade-500" />空间与物品总览
+          </h2>
+          <p class="text-[11px] text-slate-500">
+            空间 {{ spaces.length }} · 物品/功法 {{ things.length }} · 空间按出现章节数排序，物品按出现次数排序
+          </p>
+        </div>
+
+        <div class="ml-auto flex flex-wrap items-center gap-2">
+          <div class="flex rounded-lg bg-ink-900/60 p-1">
+            <button
+              class="btn !px-3 !py-1"
+              :class="tab === 'spaces' ? 'bg-jade-500 text-ink-900' : 'text-slate-300 hover:bg-ink-600'"
+              @click="tab = 'spaces'"
+            >
+              <i class="fa-solid fa-mountain-sun" />空间 ({{ spaces.length }})
+            </button>
+            <button
+              class="btn !px-3 !py-1"
+              :class="tab === 'things' ? 'bg-gold-400 text-ink-900' : 'text-slate-300 hover:bg-ink-600'"
+              @click="tab = 'things'"
+            >
+              <i class="fa-solid fa-gem" />物品功法 ({{ things.length }})
+            </button>
+          </div>
+          <input v-model="query" class="input w-52 !py-1.5 text-xs" placeholder="搜索名称 / 地点 / 人物…" />
+          <button v-if="query" class="btn-ghost !px-2 !py-1 text-xs" title="清除搜索" @click="query = ''">
+            <i class="fa-solid fa-xmark" />
           </button>
         </div>
-        <input v-model="query" class="input ml-auto !w-56 !py-1.5 text-xs" placeholder="搜索…" />
-      </div>
+      </header>
 
-      <!-- 空间地点 -->
-      <div v-if="tab === 'spaces'" class="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        <article v-for="s in filteredSpaces" :key="s.key" class="panel p-4">
-          <div class="flex items-start gap-2">
-            <i class="fa-solid fa-location-dot mt-0.5 text-jade-400" />
-            <div class="min-w-0 flex-1">
-              <h4 class="truncate font-medium text-slate-100">{{ s.site }}</h4>
-              <p class="text-[11px] text-slate-500">{{ s.world }}<template v-if="s.region"> · {{ s.region }}</template></p>
-            </div>
-            <span class="rounded bg-ink-600 px-2 py-0.5 text-[11px] text-slate-400">{{ s.chapters.length }} 章</span>
-          </div>
+      <div class="min-h-0 flex-1 overflow-auto">
+        <!-- 空间地点 -->
+        <table v-if="tab === 'spaces'" class="w-full min-w-[980px] border-collapse text-left text-sm">
+          <thead class="sticky top-0 z-10 bg-ink-800/95 text-[11px] uppercase tracking-wide text-slate-500 backdrop-blur">
+            <tr>
+              <th class="w-12 px-3 py-2 font-medium">#</th>
+              <th class="min-w-[180px] px-3 py-2 font-medium">空间</th>
+              <th class="min-w-[160px] px-3 py-2 font-medium">首次出现</th>
+              <th class="min-w-[130px] px-3 py-2 font-medium">出现</th>
+              <th class="min-w-[220px] px-3 py-2 font-medium">人物</th>
+              <th class="min-w-[220px] px-3 py-2 font-medium">物品 / 功法</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr
+              v-for="(s, i) in filteredSpaces"
+              :key="s.key"
+              class="border-t border-ink-700/50 align-top transition hover:bg-ink-700/20"
+            >
+              <td class="px-3 py-2.5 text-xs text-slate-600">{{ i + 1 }}</td>
 
-          <div v-if="s.chars.size" class="mt-3">
-            <div class="mb-1 text-[11px] uppercase tracking-wide text-slate-500">人物</div>
-            <div class="flex flex-wrap gap-1">
-              <span v-for="id in [...s.chars].slice(0, 8)" :key="id" class="rounded-full border border-jade-500/40 bg-jade-500/10 px-2 py-0.5 text-[11px] text-jade-300">
-                {{ nameOf(id) }}
-              </span>
-            </div>
-          </div>
+              <td class="px-3 py-2.5">
+                <div class="flex items-center gap-2">
+                  <i class="fa-solid fa-location-dot text-[11px] text-gold-400" />
+                  <span class="font-medium text-slate-100">{{ s.site }}</span>
+                </div>
+                <div v-if="spaceSubtitle(s)" class="mt-0.5 text-[11px] text-slate-500">{{ spaceSubtitle(s) }}</div>
+              </td>
 
-          <div v-if="s.items.size" class="mt-2">
-            <div class="mb-1 text-[11px] uppercase tracking-wide text-slate-500">物品 / 功法</div>
-            <div class="flex flex-wrap gap-1">
-              <span v-for="id in [...s.items].slice(0, 8)" :key="id" class="rounded-full border border-gold-400/40 bg-gold-400/10 px-2 py-0.5 text-[11px] text-gold-400">
-                {{ nameOf(id) }}
-              </span>
-            </div>
-          </div>
-        </article>
-        <p v-if="!filteredSpaces.length" class="col-span-full py-10 text-center text-sm text-slate-500">无匹配地点。</p>
-      </div>
+              <td class="px-3 py-2.5 text-xs">
+                <div class="text-slate-300">第 {{ s.firstChapter + 1 }} 章</div>
+                <div class="truncate text-[11px] text-slate-500" :title="chapterByIndex.get(s.firstChapter)?.title">
+                  {{ chapterByIndex.get(s.firstChapter)?.title || "未命名章节" }}
+                </div>
+              </td>
 
-      <!-- 物品功法 -->
-      <div v-else class="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        <article v-for="t in filteredThings" :key="t.it.id" class="panel p-4">
-          <div class="flex items-start gap-2">
-            <i
-              class="fa-solid mt-0.5 text-gold-400"
-              :class="t.it.entity_type === 'SKILL' ? 'fa-hand-fist' : 'fa-gem'"
-            />
-            <div class="min-w-0 flex-1">
-              <h4 class="truncate font-medium text-slate-100">{{ t.it.name }}</h4>
-              <p class="text-[11px] text-slate-500">
-                {{ categoryLabel[t.it.entity_type] ?? t.it.entity_type }}
-                <template v-if="t.it.first_appeared_chapter_index != null"> · 首现 第 {{ t.it.first_appeared_chapter_index + 1 }} 章</template>
-              </p>
-            </div>
-            <span class="rounded bg-ink-600 px-2 py-0.5 text-[11px] text-slate-400">{{ t.count }} 次</span>
-          </div>
-          <p v-if="t.site" class="mt-2 text-[11px] text-slate-400">
-            <i class="fa-solid fa-location-dot mr-1" />{{ t.site }}
-          </p>
-          <p v-if="t.usage" class="mt-1 line-clamp-3 text-[11px] text-slate-500">{{ t.usage }}</p>
-        </article>
-        <p v-if="!filteredThings.length" class="col-span-full py-10 text-center text-sm text-slate-500">无匹配物品。</p>
+              <td class="px-3 py-2.5 text-xs">
+                <div class="text-slate-300">{{ s.chapters.length }} 章</div>
+                <div class="text-[10px] text-slate-600">
+                  首次 {{ s.firstChapter + 1 }} · 最近 {{ s.lastChapter + 1 }}
+                </div>
+              </td>
+
+              <td class="px-3 py-2.5">
+                <div v-if="s.chars.size" class="flex flex-wrap gap-1">
+                  <span
+                    v-for="id in [...s.chars].slice(0, 8)"
+                    :key="id"
+                    class="rounded-full border border-jade-500/30 bg-jade-500/5 px-2 py-0.5 text-[10px] text-jade-300"
+                  >
+                    {{ nameOf(id) }}
+                  </span>
+                  <span v-if="s.chars.size > 8" class="self-center text-[10px] text-slate-500">
+                    +{{ s.chars.size - 8 }}
+                  </span>
+                </div>
+                <span v-else class="text-xs text-slate-600">—</span>
+              </td>
+
+              <td class="px-3 py-2.5">
+                <div v-if="s.items.size" class="flex flex-wrap gap-1">
+                  <span
+                    v-for="id in [...s.items].slice(0, 8)"
+                    :key="id"
+                    class="rounded-full border border-gold-400/30 bg-gold-400/5 px-2 py-0.5 text-[10px] text-gold-400"
+                  >
+                    {{ nameOf(id) }}
+                  </span>
+                  <span v-if="s.items.size > 8" class="self-center text-[10px] text-slate-500">
+                    +{{ s.items.size - 8 }}
+                  </span>
+                </div>
+                <span v-else class="text-xs text-slate-600">—</span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+
+        <!-- 物品功法 -->
+        <table v-else class="w-full min-w-[1080px] border-collapse text-left text-sm">
+          <thead class="sticky top-0 z-10 bg-ink-800/95 text-[11px] uppercase tracking-wide text-slate-500 backdrop-blur">
+            <tr>
+              <th class="w-12 px-3 py-2 font-medium">#</th>
+              <th class="min-w-[170px] px-3 py-2 font-medium">名称</th>
+              <th class="w-20 px-3 py-2 font-medium">类别</th>
+              <th class="min-w-[160px] px-3 py-2 font-medium">首次出现</th>
+              <th class="min-w-[150px] px-3 py-2 font-medium">获得地点</th>
+              <th class="min-w-[220px] px-3 py-2 font-medium">使用 / 描述</th>
+              <th class="min-w-[200px] px-3 py-2 font-medium">关联人物</th>
+              <th class="w-20 px-3 py-2 font-medium">出现</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr
+              v-for="(t, i) in filteredThings"
+              :key="t.entity.id"
+              class="border-t border-ink-700/50 align-top transition hover:bg-ink-700/20"
+            >
+              <td class="px-3 py-2.5 text-xs text-slate-600">{{ i + 1 }}</td>
+
+              <td class="px-3 py-2.5">
+                <div class="flex items-center gap-2">
+                  <i
+                    class="fa-solid text-[11px] text-gold-400"
+                    :class="t.entity.entity_type === 'SKILL' ? 'fa-hand-fist' : 'fa-gem'"
+                  />
+                  <span class="font-medium text-slate-100">{{ t.entity.name }}</span>
+                </div>
+                <div v-if="t.entity.description" class="mt-0.5 line-clamp-2 text-[11px] text-slate-500">
+                  {{ t.entity.description }}
+                </div>
+              </td>
+
+              <td class="px-3 py-2.5">
+                <span class="rounded border border-gold-400/40 bg-gold-400/10 px-1.5 py-0.5 text-[10px] text-gold-400">
+                  {{ categoryLabel[t.entity.entity_type] ?? t.entity.entity_type }}
+                </span>
+              </td>
+
+              <td class="px-3 py-2.5 text-xs">
+                <template v-if="t.firstChapter">
+                  <div class="text-slate-300">第 {{ t.firstChapter.chapter_index + 1 }} 章</div>
+                  <div class="truncate text-[11px] text-slate-500" :title="t.firstChapter.title">
+                    {{ t.firstChapter.title || "未命名章节" }}
+                  </div>
+                  <div v-if="firstLocation(t.firstChapter)" class="mt-0.5 text-[10px] text-gold-400">
+                    <i class="fa-solid fa-location-dot mr-1" />{{ firstLocation(t.firstChapter) }}
+                  </div>
+                </template>
+                <span v-else class="text-slate-600">—</span>
+              </td>
+
+              <td class="px-3 py-2.5 text-xs">
+                <span v-if="t.acquiredSite" class="text-gold-400">
+                  <i class="fa-solid fa-location-dot mr-1" />{{ t.acquiredSite }}
+                </span>
+                <span v-else class="text-slate-600">—</span>
+              </td>
+
+              <td class="px-3 py-2.5 text-xs leading-relaxed text-slate-400">
+                {{ t.usage || "—" }}
+              </td>
+
+              <td class="px-3 py-2.5">
+                <div v-if="t.related.length" class="flex flex-wrap gap-1">
+                  <span
+                    v-for="name in t.related.slice(0, 6)"
+                    :key="name"
+                    class="rounded-full border border-jade-500/30 bg-jade-500/5 px-2 py-0.5 text-[10px] text-jade-300"
+                  >
+                    {{ name }}
+                  </span>
+                  <span v-if="t.related.length > 6" class="self-center text-[10px] text-slate-500">
+                    +{{ t.related.length - 6 }}
+                  </span>
+                </div>
+                <span v-else class="text-xs text-slate-600">—</span>
+              </td>
+
+              <td class="px-3 py-2.5 text-xs text-slate-300">{{ t.count }} 次</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <p
+          v-if="(tab === 'spaces' ? filteredSpaces.length : filteredThings.length) === 0"
+          class="py-10 text-center text-sm text-slate-500"
+        >
+          {{ tab === "spaces" ? "无匹配地点。" : "无匹配物品。" }}
+        </p>
       </div>
     </div>
   </div>

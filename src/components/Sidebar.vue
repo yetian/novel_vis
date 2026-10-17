@@ -2,11 +2,9 @@
 import { computed } from "vue";
 import { useLibraryStore } from "@/stores/library";
 import { useExtractionStore } from "@/stores/extraction";
-import { useUiStore } from "@/stores/ui";
 
 const library = useLibraryStore();
 const extraction = useExtractionStore();
-const ui = useUiStore();
 
 const isExtracting = (id: number) => extraction.runningBookIds.includes(id);
 
@@ -48,7 +46,7 @@ const hasBooks = computed(() => library.books.length > 0);
             ? 'border-jade-500 bg-jade-500/10'
             : 'border-ink-600/60 hover:border-ink-500 hover:bg-ink-700/50'
         "
-        @click="library.open(book.id); ui.setView('canvas')"
+        @click="library.open(book.id, 'summary')"
       >
         <div class="flex items-center gap-2">
           <i class="fa-solid text-jade-400" :class="formatIcon(book.format)" />

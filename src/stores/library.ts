@@ -2,7 +2,7 @@ import { defineStore } from "pinia";
 import { api } from "@/api/tauri";
 import { errText } from "@/utils/error";
 import type { BookInspection, BookRow, TimelineBundle } from "@/types/schema";
-import { useUiStore } from "./ui";
+import { useUiStore, type ViewKey } from "./ui";
 
 export interface PendingImport {
   path: string;
@@ -87,13 +87,15 @@ export const useLibraryStore = defineStore("library", {
     cancelPending() {
       this.pending = null;
     },
-    async open(bookId: number) {
+    /// 打开书籍；可选在数据加载完成后切换视图（避免先切页时显示上一本书的数据）。
+    async open(bookId: number, view?: ViewKey) {
       const ui = useUiStore();
       this.activeBookId = bookId;
       await this.reloadTimeline();
       if (!this.timeline || this.timeline.chapters.length === 0) {
         ui.toast("该书尚未抽取任何章节", "info");
       }
+      if (view) ui.setView(view);
     },
     async reloadTimeline() {
       if (!this.activeBookId) return;

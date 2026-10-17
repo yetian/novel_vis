@@ -116,8 +116,9 @@ const totalExtracted = computed(() => books.value.reduce((s, b) => s + b.extract
           <article
             v-for="book in books"
             :key="book.id"
-            class="panel flex flex-col p-4"
+            class="panel flex cursor-pointer flex-col p-4 transition hover:border-ink-500"
             :class="{ 'ring-1 ring-jade-500/60': book.id === library.activeBookId }"
+            @click="library.open(book.id, 'summary')"
           >
             <div class="flex items-start gap-3">
               <div class="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-ink-600 text-jade-400">
@@ -141,16 +142,19 @@ const totalExtracted = computed(() => books.value.reduce((s, b) => s + b.extract
               </div>
             </div>
             <div class="mt-4 flex flex-wrap gap-2">
-              <button class="btn-ghost !py-1.5" @click="library.open(book.id); ui.setView('canvas')">
+              <button class="btn-ghost !py-1.5" @click.stop="library.open(book.id, 'summary')">
+                <i class="fa-solid fa-list-ul" />总览
+              </button>
+              <button class="btn-ghost !py-1.5" @click.stop="library.open(book.id, 'canvas')">
                 <i class="fa-solid fa-diagram-project" />画布
               </button>
-              <button class="btn-primary !py-1.5" @click="library.open(book.id); ui.setView('library')">
+              <button class="btn-primary !py-1.5" @click.stop="library.open(book.id, 'library')">
                 <i class="fa-solid fa-wand-magic-sparkles" />抽取
               </button>
-              <button class="btn-ghost !py-1.5" @click="exportHtml(book.id)">
+              <button class="btn-ghost !py-1.5" @click.stop="exportHtml(book.id)">
                 <i class="fa-solid fa-file-export" />导出
               </button>
-              <button class="btn-danger ml-auto !py-1.5" @click="library.remove(book.id)">
+              <button class="btn-danger ml-auto !py-1.5" @click.stop="library.remove(book.id)">
                 <i class="fa-solid fa-trash" />
               </button>
             </div>

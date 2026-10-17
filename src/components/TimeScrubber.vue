@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
+import { cleanPlace, cleanWorld } from "@/utils/space";
 import type { ChapterRow } from "@/types/schema";
 
 const props = defineProps<{
@@ -20,6 +21,13 @@ const cumulativeDays = computed(() => {
 const maxDays = computed(() => cumulativeDays.value[cumulativeDays.value.length - 1] ?? 0);
 
 const virtualDays = computed(() => cumulativeDays.value[props.modelValue] ?? 0);
+
+const currentChapter = computed(() => props.chapters[props.modelValue]);
+const currentPlace = computed(() => {
+  const c = currentChapter.value;
+  if (!c) return "";
+  return cleanPlace(c.site) || cleanPlace(c.region) || cleanWorld(c.world);
+});
 
 function onChapterInput(e: Event) {
   emit("update:modelValue", Number((e.target as HTMLInputElement).value));
@@ -76,5 +84,24 @@ function onTimeInput(e: Event) {
       />
     </div>
 
+    <div v-if="currentChapter" class="mt-1 flex flex-wrap items-center gap-2 text-[11px]">
+      <span class="text-gold-400">第 {{ currentChapter.chapter_index + 1 }} 章 · {{ currentChapter.title }}</span>
+      <span v-if="currentPlace" class="rounded-full border border-gold-400/40 px-2 py-0.5 text-gold-400">
+        <i class="fa-solid fa-location-dot mr-1" />{{ currentPlace }}
+        <template v-if="cleanWorld(currentChapter.world)"> · {{ cleanWorld(currentChapter.world) }}</template>
+      </span>
+      <span
+        v-if="currentChapter.temporal_type"
+        class="rounded-full border border-jade-500/40 px-2 py-0.5 text-jade-400"
+      >
+        {{ currentChapter.temporal_type }}
+      </span>
+      <span
+        v-if="currentChapter.movement_type && currentChapter.movement_type !== 'STAY'"
+        class="rounded-full border border-ink-500 px-2 py-0.5 text-slate-400"
+      >
+        {{ currentChapter.movement_type }}
+      </span>
+    </div>
   </div>
 </template>

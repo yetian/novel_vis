@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import { useLibraryStore } from "@/stores/library";
+import { cleanPlace, cleanWorld } from "@/utils/space";
 
 const library = useLibraryStore();
 const query = ref("");
@@ -110,11 +111,13 @@ const rows = computed(() => {
             </span>
             <h3 class="min-w-0 truncate text-sm font-semibold text-slate-100">{{ c.title || "未命名章节" }}</h3>
             <span
-              v-if="c.world || c.site"
+              v-if="c.site || c.region || c.world"
               class="rounded-full border border-gold-400/40 px-2 py-0.5 text-[10px] text-gold-400"
             >
-              <i class="fa-solid fa-location-dot mr-1" />{{ c.site || c.region || c.world
-              }}<template v-if="c.world && c.site"> · {{ c.world }}</template>
+              <i class="fa-solid fa-location-dot mr-1" />{{
+                cleanPlace(c.site) || cleanPlace(c.region) || cleanWorld(c.world)
+              }}<template v-if="cleanWorld(c.world) && (cleanPlace(c.site) || cleanPlace(c.region))">
+                · {{ cleanWorld(c.world) }}</template>
             </span>
             <span
               v-if="c.temporal_type && c.temporal_type !== 'CONTINUOUS' && c.temporal_type !== 'UNCERTAIN'"

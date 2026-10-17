@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from "vue";
+import { cleanPlace, cleanWorld } from "@/utils/space";
 import type { ChapterRow, EntityEventRow, EntityRow, SiteSelection } from "@/types/schema";
 
 const props = defineProps<{
@@ -21,7 +22,7 @@ const COL_W = 46;
 const LEFT = 176;
 const TOP = 44;
 const BOTTOM = 28;
-const MAX_CHARS = 28;
+const MAX_CHARS = 36;
 const MAX_RELATIONS = 180;
 
 // 7 色人物调色板（高对比、深色背景可读）；超过 7 人时循环使用。
@@ -33,11 +34,12 @@ const scroller = ref<HTMLDivElement | null>(null);
 const scrollLeft = ref(0);
 const scrollTop = ref(0);
 
-const worldOf = (w?: string | null) => (w || "未知空间").trim() || "未知空间";
+// 世界/地点只取原文内容；旧数据里的“现实世界”等泛化标签会被清空。
+const worldOf = (w?: string | null) => cleanWorld(w);
 const siteOf = (c: { world?: string | null; region?: string | null; site?: string | null }) =>
-  (c.site || c.region || worldOf(c.world)).trim() || worldOf(c.world);
+  cleanPlace(c.site) || cleanPlace(c.region) || worldOf(c.world) || "未标注空间";
 const spaceKeyOf = (c: { world?: string | null; region?: string | null; site?: string | null }) =>
-  `${worldOf(c.world)}::${(c.region || "").trim()}::${siteOf(c)}`;
+  `${worldOf(c.world)}::${cleanPlace(c.region)}::${siteOf(c)}`;
 
 interface SpaceRow {
   key: string;
@@ -58,7 +60,7 @@ const spaceRows = computed<SpaceRow[]>(() => {
       row = {
         key,
         world: worldOf(c.world),
-        region: c.region ?? null,
+        region: cleanPlace(c.region) || null,
         site: siteOf(c),
         label: siteOf(c),
         firstIndex: c.chapter_index,
@@ -73,10 +75,16 @@ const spaceRows = computed<SpaceRow[]>(() => {
   const counts = new Map<string, number>();
   for (const r of rows) counts.set(r.label, (counts.get(r.label) ?? 0) + 1);
   for (const r of rows) {
-    if ((counts.get(r.label) ?? 0) > 1) r.label = `${r.site} · ${r.region || r.world}`;
+    if ((counts.get(r.label) ?? 0) > 1) r.label = `${r.site} · ${r.region || r.world || "未标注"}`;
   }
   return rows;
 });
+
+const rowSubtitle = (row: SpaceRow) => [row.world, row.region].filter(Boolean).join(" · ");
+
+const characterIds = computed(
+  () => new Set(props.entities.filter((e) => e.entity_type === "CHARACTER").map((e) => e.id)),
+);
 
 const rowIndexByKey = computed(() => {
   const m = new Map<string, number>();
@@ -89,6 +97,25 @@ const chapterByIndex = computed(() => {
   for (const c of props.chapters) m.set(c.chapter_index, c);
   return m;
 });
+
+/// 每个空间出现过的具名人物数（用于行标签摘要）。
+const rowCharCounts = computed(() => {
+  const m = new Map<string, Set<number>>();
+  for (const ev of props.events) {
+    if (!characterIds.value.has(ev.entity_id)) continue;
+    const ch = chapterByIndex.value.get(ev.chapter_index);
+    if (!ch) continue;
+    const key = spaceKeyOf(ch);
+    let set = m.get(key);
+    if (!set) {
+      set = new Set<number>();
+      m.set(key, set);
+    }
+    set.add(ev.entity_id);
+  }
+  return m;
+});
+const charCountOf = (row: SpaceRow) => rowCharCounts.value.get(row.key)?.size ?? 0;
 
 const xOf = (chapterIndex: number) => LEFT + chapterIndex * COL_W + COL_W / 2;
 const rowTop = (row: number) => TOP + row * ROW_H;
@@ -114,6 +141,11 @@ const temporalMarks = computed(() =>
 
 const activeChapter = computed(() => props.chapters[props.activeIndex] ?? null);
 const activeX = computed(() => (activeChapter.value ? xOf(activeChapter.value.chapter_index) : 0));
+const activeRowIndex = computed(() => {
+  const chapter = activeChapter.value;
+  return chapter ? rowIndexByKey.value.get(spaceKeyOf(chapter)) ?? null : null;
+});
+const characterTotal = computed(() => characterIds.value.size);
 
 const eventsByChar = computed(() => {
   const m = new Map<number, EntityEventRow[]>();
@@ -396,6 +428,16 @@ onMounted(() => requestAnimationFrame(scrollToActive));
           stroke="rgba(148,163,184,0.07)"
         />
 
+        <!-- 当前空间行 -->
+        <rect
+          v-if="activeRowIndex != null"
+          :x="0"
+          :y="rowTop(activeRowIndex)"
+          :width="contentW"
+          :height="ROW_H"
+          fill="rgba(240,180,41,0.05)"
+        />
+
         <!-- 当前章节 -->
         <rect
           v-if="activeChapter"
@@ -519,18 +561,21 @@ onMounted(() => requestAnimationFrame(scrollToActive));
           v-for="(row, i) in spaceRows"
           :key="row.key"
           class="pointer-events-auto absolute left-0 flex w-full items-center gap-2 border-b border-ink-600/25 px-3 text-left transition hover:bg-jade-500/10"
+          :class="activeRowIndex === i ? 'bg-gold-400/10' : ''"
           :style="{ top: `${rowTop(i)}px`, height: `${ROW_H}px` }"
           @click.stop="selectSpace(row)"
         >
           <span
-            class="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-ink-600/80 text-[10px] font-semibold text-slate-300"
+            class="flex h-5 w-5 shrink-0 items-center justify-center rounded text-[10px] font-semibold"
+            :class="activeRowIndex === i ? 'bg-gold-400 text-ink-900' : 'bg-ink-600/80 text-slate-300'"
           >
             {{ i + 1 }}
           </span>
           <span class="min-w-0 flex-1">
             <span class="block truncate text-xs font-semibold text-slate-200">{{ row.label }}</span>
             <span class="block truncate text-[10px] text-slate-500">
-              {{ row.world }}<template v-if="row.region"> · {{ row.region }}</template> · {{ row.chapters }} 章
+              <template v-if="rowSubtitle(row)">{{ rowSubtitle(row) }} · </template>
+              {{ row.chapters }} 章 · {{ charCountOf(row) }} 人
             </span>
           </span>
         </button>
@@ -564,6 +609,9 @@ onMounted(() => requestAnimationFrame(scrollToActive));
     <div
       class="absolute bottom-3 right-3 rounded-lg border border-ink-600/50 bg-ink-800/85 px-3 py-2 text-[11px] text-slate-400 backdrop-blur"
     >
+      <div class="mb-1 font-medium text-slate-300">
+        {{ spaceRows.length }} 个空间 · {{ characterTotal }} 位人物 · {{ chapters.length }} 章
+      </div>
       <div class="mb-1 flex items-center gap-3">
         <label class="flex cursor-pointer items-center gap-1.5">
           <input v-model="showRelations" type="checkbox" class="accent-jade-500" />
@@ -587,6 +635,9 @@ onMounted(() => requestAnimationFrame(scrollToActive));
           人物（7 色循环）
         </span>
         <span><span class="mr-1 inline-block h-0.5 w-3 align-middle border-t border-dashed border-slate-400" />关系</span>
+      </div>
+      <div v-if="characterTotal > charTracks.length" class="text-slate-500">
+        轨迹展示出场最多的 {{ charTracks.length }} 人，完整名单见「人物关系」。
       </div>
       <div class="mt-1 text-slate-500">横轴=时间 · 每行=一个空间 · 点击行看地点 · 点击轨迹看人物</div>
     </div>

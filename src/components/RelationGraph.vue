@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import { useLibraryStore } from "@/stores/library";
+import { cleanPlace, cleanWorld } from "@/utils/space";
 import type { ChapterRow, EntityEventRow, EntityRow } from "@/types/schema";
 
 const library = useLibraryStore();
@@ -10,7 +11,22 @@ const timeline = computed(() => library.timeline);
 const chapters = computed(() => timeline.value?.chapters ?? []);
 const entities = computed(() => timeline.value?.entities ?? []);
 const events = computed(() => timeline.value?.events ?? []);
-const characters = computed(() => entities.value.filter((e) => e.entity_type === "CHARACTER"));
+
+const normalizeName = (s?: string | null) => (s || "").replace(/[\s·•,，.。:：()（）\-—_]/g, "").toLowerCase();
+const bookAuthor = computed(() => (timeline.value?.book.author || "").trim());
+const authorKey = computed(() => normalizeName(bookAuthor.value));
+const AUTHOR_LABELS = new Set(["作者", "本书作者", "原作者"]);
+
+/// 人物：排除作者署名与“作者”占位条目。
+const characters = computed(() =>
+  entities.value.filter((e) => {
+    if (e.entity_type !== "CHARACTER") return false;
+    const name = (e.name || "").trim();
+    if (AUTHOR_LABELS.has(name)) return false;
+    if (authorKey.value && normalizeName(name) === authorKey.value) return false;
+    return true;
+  }),
+);
 
 const chapterByIndex = computed(() => {
   const m = new Map<number, ChapterRow>();
@@ -109,69 +125,106 @@ const dayByChapter = computed(() => {
 });
 const hasStoryTime = computed(() => chapters.value.some((c) => (c.time_offset_days ?? 0) !== 0));
 
-function derivedImportance(id: number, eventCount: number, chapterCount: number): number {
-  const role = roleByChar.value.get(id) || "";
-  let score = 1;
-  if (/主角|男主|女主|protagonist/i.test(role)) score = 5;
-  else if (/反派|主要|核心|boss/i.test(role)) score = 4;
-  else if (/配角|重要/i.test(role)) score = 3;
-
-  if (eventCount >= 40 || chapterCount >= 20) score = Math.max(score, 4);
-  else if (eventCount >= 12 || chapterCount >= 6) score = Math.max(score, 3);
-  else if (eventCount >= 4 || chapterCount >= 2) score = Math.max(score, 2);
-  return score;
-}
-
 interface PersonRow {
   entity: EntityRow;
   role: string;
   importance: number;
+  explicit: number | null;
   eventCount: number;
   chapterCount: number;
+  span: number;
   firstChapter: ChapterRow | null;
   firstDay: number | null;
+  firstPlace: string;
+  firstWhere: string;
   relations: { id: number; name: string; weight: number }[];
 }
 
-const allRows = computed<PersonRow[]>(() =>
-  characters.value
-    .map((entity) => {
-      const evs = eventsByChar.value.get(entity.id) ?? [];
-      const chapterSet = new Set(evs.map((e) => e.chapter_index));
-      const firstChapter =
-        entity.first_appeared_chapter_index != null
-          ? chapterByIndex.value.get(entity.first_appeared_chapter_index) ?? null
-          : null;
+/// 先汇总全书范围，再用“模型判断 + 覆盖章节 + 出场频率 + 时间跨度”计算全局重要度。
+const globalStats = computed(() => {
+  const list = characters.value.map((entity) => {
+    const evs = eventsByChar.value.get(entity.id) ?? [];
+    const chapterSet = new Set(evs.map((e) => e.chapter_index));
+    const first =
+      entity.first_appeared_chapter_index ??
+      (evs.length ? Math.min(...evs.map((e) => e.chapter_index)) : null);
+    const last = evs.length ? Math.max(...evs.map((e) => e.chapter_index)) : first;
+    return { entity, evs, chapterSet, first, last };
+  });
+  return {
+    list,
+    maxEvents: Math.max(1, ...list.map((x) => x.evs.length)),
+    totalChapters: Math.max(1, chapters.value.length),
+    totalSpan: Math.max(1, chapters.value.length - 1),
+  };
+});
+
+const allRows = computed<PersonRow[]>(() => {
+  const stats = globalStats.value;
+  return stats.list
+    .map(({ entity, evs, chapterSet, first, last }) => {
       const eventCount = evs.length;
       const chapterCount = chapterSet.size;
+      const span = first != null && last != null ? Math.max(0, last - first) : 0;
+      const firstIndex = entity.first_appeared_chapter_index ?? first;
+      const firstChapter = firstIndex != null ? chapterByIndex.value.get(firstIndex) ?? null : null;
+      const role = roleByChar.value.get(entity.id) ?? "";
       const explicit =
         entity.importance != null && entity.importance >= 1 && entity.importance <= 5
           ? Math.round(entity.importance)
           : null;
+
+      const coverage = chapterCount / stats.totalChapters;
+      const volume = eventCount / stats.maxEvents;
+      const spanRatio = span / stats.totalSpan;
+      let raw: number;
+      if (explicit != null) {
+        // 模型判断占一半权重，其余由全书覆盖/频率/跨度校准。
+        raw = 0.5 * explicit + 5 * (0.2 * coverage + 0.15 * volume + 0.15 * spanRatio);
+      } else {
+        raw = 5 * (0.35 * coverage + 0.35 * volume + 0.3 * spanRatio);
+      }
+      if (/主角|男主|女主|protagonist/i.test(role)) raw += 0.5;
+      else if (/反派|主要|核心|boss/i.test(role)) raw += 0.25;
+      const importance = Math.max(1, Math.min(5, Math.ceil(raw)));
+
+      const firstPlace = firstChapter
+        ? cleanPlace(firstChapter.site) ||
+          cleanPlace(firstChapter.region) ||
+          cleanWorld(firstChapter.world) ||
+          ""
+        : "";
+      const firstWhere = firstChapter
+        ? [cleanWorld(firstChapter.world), cleanPlace(firstChapter.region)].filter(Boolean).join(" · ")
+        : "";
+
       return {
         entity,
-        role: roleByChar.value.get(entity.id) ?? "",
-        importance: explicit ?? derivedImportance(entity.id, eventCount, chapterCount),
+        role,
+        importance,
+        explicit,
         eventCount,
         chapterCount,
+        span,
         firstChapter,
         firstDay:
-          entity.first_appeared_chapter_index != null
-            ? dayByChapter.value.get(entity.first_appeared_chapter_index) ?? null
-            : null,
+          firstIndex != null ? dayByChapter.value.get(firstIndex) ?? null : null,
+        firstPlace,
+        firstWhere,
         relations: relationsByChar.value.get(entity.id) ?? [],
       };
     })
     .sort((a, b) => {
       if (b.importance !== a.importance) return b.importance - a.importance;
-      if (b.eventCount !== a.eventCount) return b.eventCount - a.eventCount;
       if (b.chapterCount !== a.chapterCount) return b.chapterCount - a.chapterCount;
+      if (b.eventCount !== a.eventCount) return b.eventCount - a.eventCount;
+      if (b.span !== a.span) return b.span - a.span;
       const ai = a.firstChapter?.chapter_index ?? Number.MAX_SAFE_INTEGER;
       const bi = b.firstChapter?.chapter_index ?? Number.MAX_SAFE_INTEGER;
       if (ai !== bi) return ai - bi;
       return a.entity.name.localeCompare(b.entity.name);
-    }),
-);
+    });
+});
 
 const rows = computed(() => {
   const q = query.value.trim();
@@ -213,7 +266,7 @@ const importanceLabel = (n: number) => IMPORTANCE_LABELS[n] ?? "—";
             <i class="fa-solid fa-users mr-1 text-jade-500" />人物总览
           </h2>
           <p class="text-[11px] text-slate-500">
-            共 {{ characters.length }} 人 · 按重要度排序（模型从原文判断，旧数据按出场频率估算）· 关系 = 同章共同出场
+            共 {{ characters.length }} 人 · 重要度按全书汇总（模型判断 + 覆盖章节 + 出场频率 + 时间跨度）· 已排除作者署名 · 关系 = 同章共同出场
           </p>
         </div>
         <div class="ml-auto flex items-center gap-2">
@@ -254,7 +307,10 @@ const importanceLabel = (n: number) => IMPORTANCE_LABELS[n] ?? "—";
               </td>
 
               <td class="px-3 py-2.5">
-                <div class="flex items-center gap-0.5" :title="`重要度 ${row.importance}/5`">
+                <div
+                  class="flex items-center gap-0.5"
+                  :title="`重要度 ${row.importance}/5${row.explicit != null ? ` · 模型判断 ${row.explicit}/5` : ''} · 出场 ${row.eventCount} 次 / ${row.chapterCount} 章`"
+                >
                   <span
                     v-for="n in 5"
                     :key="n"
@@ -285,14 +341,9 @@ const importanceLabel = (n: number) => IMPORTANCE_LABELS[n] ?? "—";
               <td class="px-3 py-2.5 text-xs">
                 <template v-if="row.firstChapter">
                   <div class="text-gold-400">
-                    <i class="fa-solid fa-location-dot mr-1" />{{
-                      row.firstChapter.site || row.firstChapter.region || row.firstChapter.world || "未知空间"
-                    }}
+                    <i class="fa-solid fa-location-dot mr-1" />{{ row.firstPlace || "未标注空间" }}
                   </div>
-                  <div class="text-[11px] text-slate-500">
-                    {{ row.firstChapter.world
-                    }}<template v-if="row.firstChapter.region"> · {{ row.firstChapter.region }}</template>
-                  </div>
+                  <div v-if="row.firstWhere" class="text-[11px] text-slate-500">{{ row.firstWhere }}</div>
                   <div v-if="row.firstChapter.temporal_type" class="mt-0.5 text-[11px] text-jade-400">
                     {{ row.firstChapter.temporal_type }}
                     <template v-if="hasStoryTime && row.firstDay != null"> · 故事第 {{ row.firstDay }} 天</template>

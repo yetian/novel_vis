@@ -543,6 +543,13 @@ impl Db {
              FROM entities e
              LEFT JOIN chapters c ON c.id = e.first_appeared_chapter_id
              WHERE e.book_id = ?1
+               AND NOT (
+                 e.type = 'CHARACTER'
+                 AND (
+                   trim(e.name) = COALESCE((SELECT trim(author) FROM books WHERE id = ?1), '')
+                   OR trim(e.name) IN ('作者', '本书作者', '原作者')
+                 )
+               )
              ORDER BY e.type, e.id",
         )?;
         let rows = stmt
@@ -748,5 +755,40 @@ mod tests {
         let b = db.insert_chapter(book_id, 0, "t-again", "h2", None).unwrap();
         assert_eq!(a, b);
         assert_eq!(db.get_chapters(book_id).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn author_is_excluded_from_character_entities() {
+        let db = Db::open_in_memory().unwrap();
+        let book_id = db
+            .insert_book("测试书", Some("作者甲"), "EPUB", 1, None, None)
+            .unwrap();
+        let ch_id = db.insert_chapter(book_id, 0, "第一章", "h", None).unwrap();
+        let mut ext = sample_extraction();
+        ext.characters.push(CharacterEntry {
+            name: "作者甲".into(),
+            action: "ACTIVE".into(),
+            role: None,
+            description: None,
+            importance: None,
+        });
+        ext.characters.push(CharacterEntry {
+            name: "作者".into(),
+            action: "ACTIVE".into(),
+            role: None,
+            description: None,
+            importance: None,
+        });
+        db.persist_extraction(book_id, ch_id, &ext).unwrap();
+
+        let names: Vec<String> = db
+            .get_entities(book_id)
+            .unwrap()
+            .into_iter()
+            .map(|e| e.name)
+            .collect();
+        assert!(!names.iter().any(|n| n == "作者甲"));
+        assert!(!names.iter().any(|n| n == "作者"));
+        assert!(names.iter().any(|n| n == "韩立"));
     }
 }
