@@ -1,6 +1,6 @@
 # ChronoSpace Reader · 架构设计蓝图（design.md）
 
-> 当前版本：**v0.1.20**
+> 当前版本：**v0.1.21**
 > 本文档描述系统架构、数据流、SQLite 关系模式、状态机、协议契约与 UI 组件层级，并与代码库保持同步。
 
 ---
@@ -17,7 +17,7 @@
 | 可视化 | 时间 × 空间矩阵（人物轨迹 + 关系连线）+ 双轴时间线 + 实体谱系 |
 | 可发布 | 一键导出零依赖单页 HTML，适配 GitHub Pages |
 
-**技术栈**：Tauri 2.0（Rust 2021）、Vue 3（`<script setup lang="ts">`）、Vite、Pinia、TailwindCSS、Font Awesome、Cytoscape.js、rusqlite（bundled）、reqwest（rustls）。
+**技术栈**：Tauri 2.0（Rust 2021）、Vue 3（`<script setup lang="ts">`）、Vite、Pinia、TailwindCSS、Font Awesome、rusqlite（bundled）、reqwest（rustls）。静态导出页通过 CDN 引入 Cytoscape.js。
 
 ---
 
@@ -175,6 +175,7 @@ erDiagram
     INTEGER first_appeared_chapter_id FK
     TEXT role
     TEXT description
+    INTEGER importance
   }
   entity_events {
     INTEGER id PK
@@ -221,7 +222,7 @@ erDiagram
     "source_site": "七玄门宗门广场"
   },
   "characters": [
-    { "name": "墨大夫", "action": "FIRST_APPEARANCE | ACTIVE | DEPARTURE | DEATH", "role": "师尊/对手", "description": "面色青黄的老者" }
+    { "name": "墨大夫", "action": "FIRST_APPEARANCE | ACTIVE | DEPARTURE | DEATH", "role": "师尊/对手", "description": "面色青黄的老者", "importance": 4 }
   ],
   "items_and_skills": [
     { "name": "掌天瓶", "category": "ITEM | SKILL | LEGACY", "acquired_from": { "spatial": "神手谷后山草丛", "temporal": "入夜时分" }, "usage_in_chapter": "拾取并藏匿", "future_hook_flag": true }
@@ -234,7 +235,7 @@ erDiagram
 
 1. `extract_json_block`：截取首个 `{` 到末个 `}`，容忍前后缀文本与 Markdown 代码块。
 2. `repair_json_text`：剔除 `/* */` 与 `//` 注释、去除尾随逗号。
-3. `normalize_value`：补齐缺失数组、剔除缺 `name` 的条目。
+3. `normalize_value`：补齐缺失数组、剔除缺 `name` 的条目，将 `importance` 的字符串/浮点写法容错并夹紧到 1–5。
 4. 严格反序列化失败时 `lenient_extraction` 兜底，保留可识别字段。
 5. 仍失败则携带错误与上一次输出，用修复提示词让模型重试，次数 = `LlmConfig.max_retries`（默认 3）。
 
@@ -369,7 +370,8 @@ App.vue
 │   │   ├── SpaceGraph.vue          时间 × 空间矩阵：横轴章节、每行一个地点；人物首现圆点 + 跨时空轨迹 + 关系虚线
 │   │   ├── TimeScrubber.vue        章节轴 + 虚拟时间线双滑块
 │   │   └── EntityDrawer.vue        人物 / 物品功法 谱系抽屉
-│   ├── RelationGraph.vue     人物关系图（同章共现，节点按出场次数、连线按共现次数）
+│   ├── SummaryView.vue       章节总览：逐章摘要 + 统计 + 首现人物/时空标签
+│   ├── RelationGraph.vue     人物总览表：按重要度排序，含首现章节/时空、简介、同章共现关系
 │   ├── EntityCards.vue       空间地点卡片 + 物品/功法卡片（独立标签页，可搜索）
 │   └── LlmSettings.vue       引擎选择 · 模型探测 · 参数 · 连接测试 · 数据管理
 ├── ConfirmDialog.vue         全局确认框（ui.askConfirm）

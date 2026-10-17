@@ -24,6 +24,9 @@ const BOTTOM = 28;
 const MAX_CHARS = 28;
 const MAX_RELATIONS = 180;
 
+// 7 色人物调色板（高对比、深色背景可读）；超过 7 人时循环使用。
+const PERSON_COLORS = ["#f0b429", "#3ddc97", "#4dabf7", "#b197fc", "#ff8787", "#ffa94d", "#f783ac"];
+
 const showRelations = ref(true);
 const showNames = ref(true);
 const scroller = ref<HTMLDivElement | null>(null);
@@ -150,6 +153,7 @@ interface CharTrack {
   id: number;
   name: string;
   role: string | null;
+  color: string;
   points: TrackPoint[];
   turns: TrackPoint[];
   path: string;
@@ -203,7 +207,8 @@ const charTracks = computed<CharTrack[]>(() => {
     if (first) turns.unshift(first);
 
     const role = raw.find((p) => p.role)?.role ?? null;
-    return { id: c.id, name: c.name, role, points, turns, path, first, offset };
+    const color = PERSON_COLORS[i % PERSON_COLORS.length];
+    return { id: c.id, name: c.name, role, color, points, turns, path, first, offset };
   });
 });
 
@@ -279,15 +284,7 @@ const neighborIds = computed(() => {
   return s;
 });
 
-function roleColor(role: string | null): string {
-  const r = role || "";
-  if (/主角|男主|女主|protagonist|lead/i.test(r)) return "#f0b429";
-  if (/反派|敌人|对手|antagonist|villain/i.test(r)) return "#f03e3e";
-  if (/配角|support/i.test(r)) return "#4dabf7";
-  return "#20c997";
-}
-
-const trackColor = (t: CharTrack) => (t.id === props.highlightEntityId ? "#f0b429" : roleColor(t.role));
+const trackColor = (t: CharTrack) => t.color;
 const trackWidth = (t: CharTrack) => {
   if (t.id === props.highlightEntityId) return 3;
   return neighborIds.value.has(t.id) && props.highlightEntityId != null ? 2.2 : 1.6;
@@ -487,8 +484,8 @@ onMounted(() => requestAnimationFrame(scrollToActive));
             :cy="t.first.y"
             :r="dotRadius(t)"
             :fill="trackColor(t)"
-            stroke="#0b0e14"
-            stroke-width="2"
+            :stroke="t.id === highlightEntityId ? '#ffffff' : '#0b0e14'"
+            :stroke-width="t.id === highlightEntityId ? 2.5 : 2"
             class="cursor-pointer"
             @click.stop="selectTrack(t.id)"
           >
@@ -577,11 +574,18 @@ onMounted(() => requestAnimationFrame(scrollToActive));
           人名
         </label>
       </div>
-      <div class="flex flex-wrap gap-x-3 gap-y-1">
-        <span><span class="mr-1 inline-block h-2 w-2 rounded-full" style="background:#f0b429" />主角</span>
-        <span><span class="mr-1 inline-block h-2 w-2 rounded-full" style="background:#f03e3e" />反派</span>
-        <span><span class="mr-1 inline-block h-2 w-2 rounded-full" style="background:#4dabf7" />配角</span>
-        <span><span class="mr-1 inline-block h-2 w-2 rounded-full" style="background:#20c997" />其他</span>
+      <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <span class="inline-flex items-center gap-1">
+          <span class="inline-flex gap-0.5">
+            <span
+              v-for="c in PERSON_COLORS"
+              :key="c"
+              class="inline-block h-2 w-2 rounded-full"
+              :style="{ background: c }"
+            />
+          </span>
+          人物（7 色循环）
+        </span>
         <span><span class="mr-1 inline-block h-0.5 w-3 align-middle border-t border-dashed border-slate-400" />关系</span>
       </div>
       <div class="mt-1 text-slate-500">横轴=时间 · 每行=一个空间 · 点击行看地点 · 点击轨迹看人物</div>

@@ -3,6 +3,14 @@
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/) 与 [Conventional Commits](https://www.conventionalcommits.org/zh-hans/)。
 每个有意义的功能实现或修复均递增 PATCH 版本。
 
+## [0.1.21] - feat(views)
+
+- 新增「章节总览」标签页：逐章摘要列表、书籍/人物/物品/地点统计、首现时空与首次登场人物，支持搜索。
+- 人物关系页由关系图改为**人物总览表**：按重要度排序，展示姓名、简介、首现章节、首现时空（地点 + 故事天数/时间类型）与同章共现关系。
+- 抽取 Schema 新增 `characters[].importance`（1–5，模型依据原文判断），`entities` 表新增 `importance` 列并做幂等迁移；旧数据在前端按出场频率估算。
+- 时空矩阵人物改用 7 色高对比调色板（循环），提升多人轨迹辨识度。
+- 移除前端 `cytoscape` 依赖（人物图改为表格后已无引用；静态导出页仍通过 CDN 加载）。
+
 ## [0.1.20] - refactor(canvas)
 
 - 清理时空画布重复面板：移除 `StoryTimeline`（其章节刻度、跳跃/倒叙标记、点击跳转已由时空矩阵与顶部时间轴承担）。

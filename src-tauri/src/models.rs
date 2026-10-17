@@ -56,6 +56,9 @@ pub struct CharacterEntry {
     pub role: Option<String>,
     #[serde(default)]
     pub description: Option<String>,
+    /// 人物重要度（1–5，5 为全书核心），由模型依据原文判断。
+    #[serde(default)]
+    pub importance: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -201,6 +204,7 @@ pub struct EntityRow {
     pub first_appeared_chapter_id: Option<i64>,
     pub first_appeared_chapter_index: Option<i64>,
     pub description: Option<String>,
+    pub importance: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize)]

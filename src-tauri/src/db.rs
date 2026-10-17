@@ -82,6 +82,7 @@ impl Db {
                 first_appeared_chapter_id INTEGER REFERENCES chapters(id) ON DELETE SET NULL,
                 role                      TEXT,
                 description               TEXT,
+                importance                INTEGER,
                 UNIQUE(book_id, type, name)
             );
             CREATE INDEX IF NOT EXISTS idx_entities_book ON entities(book_id);
@@ -114,6 +115,18 @@ impl Db {
         }
         if !columns.iter().any(|c| c == "content_sig") {
             conn.execute("ALTER TABLE books ADD COLUMN content_sig TEXT", [])?;
+        }
+
+        let mut entity_columns: Vec<String> = Vec::new();
+        {
+            let mut stmt = conn.prepare("PRAGMA table_info(entities)")?;
+            let mut rows = stmt.query([])?;
+            while let Some(row) = rows.next()? {
+                entity_columns.push(row.get::<_, String>(1)?);
+            }
+        }
+        if !entity_columns.iter().any(|c| c == "importance") {
+            conn.execute("ALTER TABLE entities ADD COLUMN importance INTEGER", [])?;
         }
         Ok(())
     }
@@ -238,22 +251,25 @@ impl Db {
         first_appeared_chapter_id: Option<i64>,
         role: Option<&str>,
         description: Option<&str>,
+        importance: Option<i64>,
     ) -> AppResult<i64> {
         let conn = self.conn.lock();
         conn.execute(
-            "INSERT INTO entities (book_id, type, name, first_appeared_chapter_id, role, description)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            "INSERT INTO entities (book_id, type, name, first_appeared_chapter_id, role, description, importance)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
              ON CONFLICT(book_id, type, name) DO UPDATE SET
                 first_appeared_chapter_id = COALESCE(entities.first_appeared_chapter_id, excluded.first_appeared_chapter_id),
                 role = COALESCE(excluded.role, entities.role),
-                description = COALESCE(excluded.description, entities.description)",
+                description = COALESCE(excluded.description, entities.description),
+                importance = COALESCE(MAX(entities.importance, excluded.importance), entities.importance, excluded.importance)",
             params![
                 book_id,
                 entity_type,
                 name,
                 first_appeared_chapter_id,
                 role,
-                description
+                description,
+                importance
             ],
         )?;
         let id: i64 = conn.query_row(
@@ -348,7 +364,16 @@ impl Db {
         )?;
 
         for c in &ext.characters {
-            upsert_entity_tx(&tx, book_id, "CHARACTER", &c.name, chapter_id, c.role.as_deref(), c.description.as_deref())?;
+            upsert_entity_tx(
+                &tx,
+                book_id,
+                "CHARACTER",
+                &c.name,
+                chapter_id,
+                c.role.as_deref(),
+                c.description.as_deref(),
+                c.importance,
+            )?;
             let eid = entity_id_tx(&tx, book_id, "CHARACTER", &c.name)?;
             tx.execute(
                 "INSERT INTO entity_events (entity_id, chapter_id, action_type, role, acquired_site, impact_detail)
@@ -358,7 +383,16 @@ impl Db {
         }
 
         for it in &ext.items_and_skills {
-            upsert_entity_tx(&tx, book_id, &it.category, &it.name, chapter_id, None, it.usage_in_chapter.as_deref())?;
+            upsert_entity_tx(
+                &tx,
+                book_id,
+                &it.category,
+                &it.name,
+                chapter_id,
+                None,
+                it.usage_in_chapter.as_deref(),
+                None,
+            )?;
             let eid = entity_id_tx(&tx, book_id, &it.category, &it.name)?;
             let site = it.acquired_from.as_ref().and_then(|a| a.spatial.clone());
             tx.execute(
@@ -505,7 +539,7 @@ impl Db {
         let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT e.id, e.book_id, e.type, e.name, e.first_appeared_chapter_id,
-                    c.chapter_index, e.description
+                    c.chapter_index, e.description, e.importance
              FROM entities e
              LEFT JOIN chapters c ON c.id = e.first_appeared_chapter_id
              WHERE e.book_id = ?1
@@ -521,6 +555,7 @@ impl Db {
                     first_appeared_chapter_id: r.get(4)?,
                     first_appeared_chapter_index: r.get(5)?,
                     description: r.get(6)?,
+                    importance: r.get(7)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -574,15 +609,17 @@ fn upsert_entity_tx(
     chapter_id: i64,
     role: Option<&str>,
     description: Option<&str>,
+    importance: Option<i64>,
 ) -> AppResult<()> {
     tx.execute(
-        "INSERT INTO entities (book_id, type, name, first_appeared_chapter_id, role, description)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+        "INSERT INTO entities (book_id, type, name, first_appeared_chapter_id, role, description, importance)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
          ON CONFLICT(book_id, type, name) DO UPDATE SET
             first_appeared_chapter_id = COALESCE(entities.first_appeared_chapter_id, excluded.first_appeared_chapter_id),
             role = COALESCE(excluded.role, entities.role),
-            description = COALESCE(excluded.description, entities.description)",
-        params![book_id, entity_type, name, chapter_id, role, description],
+            description = COALESCE(excluded.description, entities.description),
+            importance = COALESCE(MAX(entities.importance, excluded.importance), entities.importance, excluded.importance)",
+        params![book_id, entity_type, name, chapter_id, role, description, importance],
     )?;
     Ok(())
 }
@@ -613,7 +650,7 @@ mod tests {
             "narrative_perspective": "third_person",
             "temporal": {"type":"JUMP_FORWARD","raw_marker":"三年后","relative_delta_days":1095},
             "spatial": {"world":"人界","region":"越国","site":"神手谷","movement_type":"LOCAL_MOVE","source_site":"广场"},
-            "characters":[{"name":"韩立","action":"FIRST_APPEARANCE","role":"主角","description":"少年"}],
+            "characters":[{"name":"韩立","action":"FIRST_APPEARANCE","role":"主角","description":"少年","importance":5}],
             "items_and_skills":[{"name":"掌天瓶","category":"ITEM","acquired_from":{"spatial":"后山","temporal":"入夜"},"usage_in_chapter":"拾取","future_hook_flag":true}],
             "plot_summary":"韩立拾得掌天瓶"
         }))
@@ -644,6 +681,7 @@ mod tests {
         let hanli = bundle.entities.iter().find(|e| e.name == "韩立").unwrap();
         assert_eq!(hanli.entity_type, "CHARACTER");
         assert_eq!(hanli.first_appeared_chapter_index, Some(0));
+        assert_eq!(hanli.importance, Some(5));
         assert!(bundle.entities.iter().any(|e| e.name == "掌天瓶" && e.entity_type == "ITEM"));
         assert_eq!(bundle.events.len(), 2);
 

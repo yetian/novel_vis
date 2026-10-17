@@ -482,6 +482,20 @@ fn normalize_value(value: &mut Value) {
 
     if let Some(Value::Array(chars)) = obj.get_mut("characters") {
         chars.retain(|c| c.get("name").and_then(Value::as_str).map(|s| !s.trim().is_empty()).unwrap_or(false));
+        // importance 容忍字符串/浮点，并夹紧到 1–5，避免小模型格式偏差导致整段解析失败。
+        for c in chars.iter_mut() {
+            if let Some(slot) = c.get_mut("importance") {
+                let parsed = match slot {
+                    Value::Number(n) => n.as_i64().or_else(|| n.as_f64().map(|f| f.round() as i64)),
+                    Value::String(s) => s.trim().parse::<f64>().ok().map(|f| f.round() as i64),
+                    _ => None,
+                };
+                *slot = match parsed {
+                    Some(n) => Value::from(n.clamp(1, 5)),
+                    None => Value::Null,
+                };
+            }
+        }
     }
     if let Some(Value::Array(items)) = obj.get_mut("items_and_skills") {
         items.retain(|c| c.get("name").and_then(Value::as_str).map(|s| !s.trim().is_empty()).unwrap_or(false));
@@ -670,7 +684,7 @@ pub const SYSTEM_PROMPT: &str = r#"你是一个中文小说叙事结构分析引
     "source_site": "若发生移动，填写移动起点，否则空字符串"
   },
   "characters": [
-    { "name": "人物规范名", "action": "FIRST_APPEARANCE" | "ACTIVE" | "DEPARTURE" | "DEATH", "role": "该人物在本段中的身份/关系；无则空字符串", "description": "外貌或身份描述；无则空字符串" }
+    { "name": "人物规范名", "action": "FIRST_APPEARANCE" | "ACTIVE" | "DEPARTURE" | "DEATH", "role": "该人物在本段中的身份/关系；无则空字符串", "description": "外貌或身份描述；无则空字符串", "importance": 1 到 5 的整数（5=全书核心主角，4=主要人物，3=重要配角，2=次要人物，1=路人/一次性角色） }
   ],
   "items_and_skills": [
     { "name": "物品 / 功法 / 传承名", "category": "ITEM" | "SKILL" | "LEGACY", "acquired_from": { "spatial": "获得地点", "temporal": "获得时间" }, "usage_in_chapter": "本段中的用途", "future_hook_flag": true 或 false }
@@ -687,6 +701,7 @@ pub const SYSTEM_PROMPT: &str = r#"你是一个中文小说叙事结构分析引
 6. 所有自然语言字段（人物名、地点、角色、描述、用途、摘要、raw_marker、reference_anchor 等）使用【简体中文】输出；仅 JSON 的键名与机器枚举值（如 CONTINUOUS / FIRST_APPEARANCE / ITEM）保持英文。
 7. 专有名词保留原文写法，不要翻译或音译。
 8. 输出务必精简完整：plot_summary ≤ 40 字；description / role / usage_in_chapter 各 ≤ 20 字。避免冗长导致 JSON 被截断。
+9. importance 只能填 1–5 的整数，依据【原文】中该人物的戏份、推动剧情的作用与出场频率判断；同一人物在不同分块中应尽量给出一致的值。
 
 再次强调：只返回 **一个** 合法 JSON 对象，从 `{` 开始、到 `}` 结束，不要有任何其它字符。
 "#;
@@ -796,6 +811,21 @@ mod tests {
         assert_eq!(ext.characters.len(), 1);
         assert_eq!(ext.characters[0].name, "韩立");
         assert!(ext.items_and_skills.is_empty());
+    }
+
+    #[test]
+    fn parse_extraction_coerces_importance() {
+        let payload = json!({
+            "characters": [
+                {"name": "韩立", "importance": "5"},
+                {"name": "厉飞雨", "importance": 9}
+            ],
+            "items_and_skills": []
+        })
+        .to_string();
+        let (ext, _) = parse_extraction(&payload).unwrap();
+        assert_eq!(ext.characters[0].importance, Some(5));
+        assert_eq!(ext.characters[1].importance, Some(5));
     }
 
     #[test]

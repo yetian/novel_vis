@@ -81,6 +81,8 @@ export interface EntityRow {
   first_appeared_chapter_id?: number | null;
   first_appeared_chapter_index?: number | null;
   description?: string | null;
+  /** 1–5，模型从原文判断的人物重要度（旧数据可能为空）。 */
+  importance?: number | null;
 }
 
 export interface EntityEventRow {
@@ -153,6 +155,7 @@ export interface CharacterEntry {
   action: string;
   role?: string | null;
   description?: string | null;
+  importance?: number | null;
 }
 
 export interface AcquiredFrom {
