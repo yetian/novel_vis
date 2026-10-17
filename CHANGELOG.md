@@ -3,6 +3,12 @@
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/) 与 [Conventional Commits](https://www.conventionalcommits.org/zh-hans/)。
 每个有意义的功能实现或修复均递增 PATCH 版本。
 
+## [0.1.19] - feat(canvas)
+
+- 时空画布重做为「时间 × 空间」矩阵：横轴为章节、每行一个空间，人物首现圆点 + 跨行/跨列轨迹；`chunk_chars=0` 支持整章输入（不切块），前端新增「整章」开关。
+- 画布叠加人物关系：同章共现人物以虚线连接（可开关）；选中人物后高亮其关系网与行踪。
+- 点击行查看地点元数据、点击轨迹查看人物谱系；顶部时间轴与左侧空间标签固定显示。
+
 ## [0.1.18] - feat(extract)
 
 - 并行抽取：`ExtractionRequest.concurrency`（1–4）；`run_extraction` 以 `JoinSet` 分批并发处理章节，DB 写入串行化。

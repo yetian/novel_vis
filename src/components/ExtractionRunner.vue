@@ -84,6 +84,10 @@ async function cancel() {
             跳过已完成{{ extraction.skipExtracted ? "" : "（将清空重抽）" }}
           </span>
         </label>
+        <label class="flex items-center gap-1.5 text-xs" title="整章输入：不切块，将整章文本直接交给模型（需足够的上下文窗口）">
+          <input v-model="extraction.wholeChapter" type="checkbox" class="accent-gold-400" />
+          <span :class="extraction.wholeChapter ? 'text-gold-400' : 'text-slate-400'">整章</span>
+        </label>
         <label class="flex items-center gap-1.5 text-xs text-slate-400">
           分块
           <input
@@ -91,7 +95,8 @@ async function cancel() {
             type="number"
             min="800"
             step="500"
-            class="w-20 rounded border border-ink-500 bg-ink-900 px-2 py-1 text-slate-200"
+            :disabled="extraction.wholeChapter"
+            class="w-20 rounded border border-ink-500 bg-ink-900 px-2 py-1 text-slate-200 disabled:opacity-40"
           />
         </label>
         <label class="flex items-center gap-1.5 text-xs text-slate-400" title="并发请求数（1-4）。需引擎支持并行/批处理才会提速">

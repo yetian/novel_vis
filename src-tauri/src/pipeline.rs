@@ -47,7 +47,11 @@ pub async fn run_extraction(
     let db = state.db.clone();
     let control = state.register_job(req.book_id);
     let total = book.chapters.len();
-    let chunk_chars = req.chunk_chars.unwrap_or(2000).clamp(800, 12_000);
+    // 0 = 整章输入（不切块）；否则限制在合理区间。
+    let chunk_chars = match req.chunk_chars.unwrap_or(2000) {
+        0 => 0,
+        v => v.clamp(800, 200_000),
+    };
     let concurrency = req.concurrency.unwrap_or(1).clamp(1, 4) as usize;
 
     // 未勾选「跳过已完成」= 重新处理整本书，先清除旧的抽取结果以避免重复。
@@ -179,7 +183,7 @@ async fn extract_chapter(
     pos: usize,
     total: usize,
 ) -> ChapterExtractionResult {
-    let chunks = split_chunks(&chapter.text, chunk_chars);
+    let chunks = chapter_chunks(&chapter.text, chunk_chars);
     let chunk_total = chunks.len().max(1);
 
     let mut chapter_ok = true;
@@ -502,6 +506,15 @@ fn lenient_extraction(value: &Value) -> SegmentExtraction {
         characters: vec![],
         items_and_skills: vec![],
         plot_summary: get_str("plot_summary").unwrap_or_default(),
+    }
+}
+
+/// chunk_chars == 0 表示整章输入：不做切块，直接将整章文本交给模型。
+fn chapter_chunks(text: &str, chunk_chars: usize) -> Vec<String> {
+    if chunk_chars == 0 {
+        vec![text.to_string()]
+    } else {
+        split_chunks(text, chunk_chars)
     }
 }
 
@@ -860,5 +873,13 @@ mod tests {
     #[test]
     fn split_chunks_keeps_short_text_single() {
         assert_eq!(split_chunks("短文本", 3000).len(), 1);
+    }
+
+    #[test]
+    fn chapter_chunks_zero_returns_whole_chapter() {
+        let text = "第一段\n第二段\n第三段";
+        let chunks = chapter_chunks(text, 0);
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0], text);
     }
 }

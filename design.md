@@ -1,6 +1,6 @@
 # ChronoSpace Reader · 架构设计蓝图（design.md）
 
-> 当前版本：**v0.1.18**
+> 当前版本：**v0.1.19**
 > 本文档描述系统架构、数据流、SQLite 关系模式、状态机、协议契约与 UI 组件层级，并与代码库保持同步。
 
 ---
@@ -14,7 +14,7 @@
 | 本地 LLM | 通过 OpenAI 兼容协议对接 LM Studio / Ollama，强制 JSON 输出 |
 | 结构可靠 | 严格 JSON Schema + 本地修复 + 有限次重试，容忍小模型输出抖动 |
 | 可续跑 | 逐章事务检查点，支持暂停/继续/取消与断点续跑 |
-| 可视化 | 拓扑空间图 + 双轴时间线 + 实体谱系 |
+| 可视化 | 时间 × 空间矩阵（人物轨迹 + 关系连线）+ 双轴时间线 + 实体谱系 |
 | 可发布 | 一键导出零依赖单页 HTML，适配 GitHub Pages |
 
 **技术栈**：Tauri 2.0（Rust 2021）、Vue 3（`<script setup lang="ts">`）、Vite、Pinia、TailwindCSS、Font Awesome、Cytoscape.js、rusqlite（bundled）、reqwest（rustls）。
@@ -105,7 +105,7 @@ sequenceDiagram
   participant DB as SQLite
   FE->>PIPE: invoke(start_extraction, {request})
   loop 每章
-    PIPE->>PIPE: split_chunks(~2k token)
+    PIPE->>PIPE: split_chunks(~2k token) 或整章输入
     PIPE-->>FE: emit extraction://progress (extracting)
     loop 每分块
       PIPE->>LLM: POST /chat/completions (json_object)
@@ -366,7 +366,7 @@ App.vue
 │   ├── LibraryView.vue      导入区 · 统计 · ExtractionRunner · 藏书卡片(导出/删除)
 │   │   └── ExtractionRunner.vue   开始/暂停/继续/取消 · 进度条 · 日志
 │   ├── SpacetimeCanvas.vue
-│   │   ├── SpaceGraph.vue          Cytoscape 空间图（确定性布局：世界分行、地点卡片网格）+ 主角令牌动画
+│   │   ├── SpaceGraph.vue          时间 × 空间矩阵：横轴章节、每行一个地点；人物首现圆点 + 跨时空轨迹 + 关系虚线
 │   │   ├── StoryTimeline.vue       可视化时间线：章节刻度、时间跳跃/倒叙标记、实体事件高亮
 │   │   ├── TimeScrubber.vue        章节轴 + 虚拟时间线双滑块
 │   │   └── EntityDrawer.vue        人物 / 物品功法 谱系抽屉

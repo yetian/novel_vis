@@ -74,7 +74,7 @@ function seek(i: number) {
         </div>
         <h2 class="text-lg font-semibold text-slate-200">尚无可视化数据</h2>
         <p class="mt-2 text-sm text-slate-500">
-          请先在「图书馆」导入电子书并运行批量抽取，抽取完成后即可在此查看拓扑空间图与时间线。
+          请先在「图书馆」导入电子书并运行批量抽取，抽取完成后即可在此查看“时间 × 空间”矩阵：每行一个地点，横轴为章节，轨迹为人物行踪。
         </p>
       </div>
     </div>
@@ -90,6 +90,8 @@ function seek(i: number) {
               :active-index="activeIndex"
               :highlight-entity-id="selectedEntityId"
               @select="selectedSite = $event"
+              @select-entity="selectedEntityId = $event"
+              @update:active-index="activeIndex = $event"
             />
 
             <!-- 地点元数据面板 -->
