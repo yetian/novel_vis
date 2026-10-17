@@ -1,6 +1,6 @@
 # ChronoSpace Reader · 架构设计蓝图（design.md）
 
-> 当前版本：**v0.1.23**
+> 当前版本：**v0.1.24**
 > 本文档描述系统架构、数据流、SQLite 关系模式、状态机、协议契约与 UI 组件层级，并与代码库保持同步。
 
 ---
@@ -166,6 +166,7 @@ erDiagram
     TEXT region
     TEXT site
     TEXT movement_type
+    INTEGER importance
     TEXT raw_json
   }
   entities {
@@ -220,13 +221,14 @@ erDiagram
     "region": "越国",
     "site": "神手谷",
     "movement_type": "STAY | LOCAL_MOVE | TELEPORT | ASCENSION | DUNGEON_ENTER | DUNGEON_EXIT",
-    "source_site": "七玄门宗门广场"
+    "source_site": "七玄门宗门广场",
+    "importance": 4
   },
   "characters": [
     { "name": "墨大夫", "action": "FIRST_APPEARANCE | ACTIVE | DEPARTURE | DEATH", "role": "师尊/对手", "description": "面色青黄的老者", "importance": 4 }
   ],
   "items_and_skills": [
-    { "name": "掌天瓶", "category": "ITEM | SKILL | LEGACY", "acquired_from": { "spatial": "神手谷后山草丛", "temporal": "入夜时分" }, "usage_in_chapter": "拾取并藏匿", "future_hook_flag": true }
+    { "name": "掌天瓶", "category": "ITEM | SKILL | LEGACY", "importance": 5, "acquired_from": { "spatial": "神手谷后山草丛", "temporal": "入夜时分" }, "usage_in_chapter": "拾取并藏匿", "future_hook_flag": true }
   ],
   "plot_summary": "一句话核心剧情摘要"
 }
@@ -243,6 +245,8 @@ erDiagram
 **视角归一化**：系统提示词要求判断 `first_person` / `third_person`；第一人称时把「我」解析为主角规范名，无法确定则使用 `PROTAGONIST_FIRST_PERSON` 并在 `description` 注明别名。
 
 **人物覆盖与重要度**：提示词要求尽可能列出本段所有具名人物（含次要/仅被提及者），同一人物的绰号/尊称归并到规范名；明确要求排除作者、译者、序言作者等现实身份，以及无名群体和代词。每个分块给出 `importance`（1–5），持久化时取较强值；前端再按**全书范围**用「模型判断 50% + 章节覆盖率 + 出场频率 + 时间跨度」汇总为最终 1–5 级并排序。作者署名与“作者”占位条目在 `get_entities` 查询中排除。
+
+**空间与物品重要度**：空间节点与物品/功法条目同样输出 1–5 的 `importance`。前端按全书汇总：空间用「模型判断 + 覆盖章节 + 事件频率 + 跨度 + 出场人物丰富度」，物品/功法用「模型判断 + 覆盖章节 + 出现频率 + 跨度」；模型分缺失的旧数据自动退化为纯统计公式。空间/物品表按重要度降序，并支持“仅重要”过滤。
 
 **空间来源**：`world/region/site` 只允许来自原文；不再注入“现实世界/某城市”等提示词占位值。展示层会将旧数据中的“现实世界”“未知空间”等泛化标签视为空（`utils/space.ts`）。
 
@@ -381,7 +385,7 @@ App.vue
 │   │   └── TimeScrubber.vue        章节轴 + 虚拟时间线双滑块 + 当前章节信息
 │   ├── SummaryView.vue       总览：全书总览 + 逐章摘要 + 统计 + 本章主要人物/首现人物/时空标签（点击书籍默认进入）
 │   ├── RelationGraph.vue     人物总览表：全书重要度排序，含首现/最近出场、主要活动地、同章共现区间；排除作者
-│   ├── EntityCards.vue       空间 / 物品总览表：事件数、最近章节、按出场排序的人物、获得章节与关联人物
+│   ├── EntityCards.vue       空间 / 物品总览表：全书重要度、事件数、最近章节、关联人物/物品与获得章节
 │   └── LlmSettings.vue       引擎选择 · 模型探测 · 参数 · 连接测试 · 数据管理
 ├── ConfirmDialog.vue         全局确认框（ui.askConfirm）
 └── ToastHost.vue             全局通知

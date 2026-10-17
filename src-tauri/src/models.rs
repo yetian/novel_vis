@@ -44,6 +44,9 @@ pub struct Spatial {
     pub movement_type: String,
     #[serde(default)]
     pub source_site: Option<String>,
+    /// 地点在本段剧情中的重要度（1–5），由模型依据原文判断。
+    #[serde(default)]
+    pub importance: Option<i64>,
 }
 
 /// 人物条目
@@ -81,6 +84,9 @@ pub struct ItemSkillEntry {
     pub usage_in_chapter: Option<String>,
     #[serde(default)]
     pub future_hook_flag: bool,
+    /// 物品/功法在全书中的重要度（1–5），由模型依据原文判断。
+    #[serde(default)]
+    pub importance: Option<i64>,
 }
 
 /// 单个章节/分段的核心抽取结果
@@ -195,6 +201,8 @@ pub struct ChapterRow {
     pub region: Option<String>,
     pub site: Option<String>,
     pub movement_type: Option<String>,
+    /// 本条空间节点的重要度（1–5，旧数据可能为空）。
+    pub spatial_importance: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize)]

@@ -69,6 +69,7 @@ impl Db {
                 region          TEXT,
                 site            TEXT,
                 movement_type   TEXT,
+                importance      INTEGER,
                 raw_json        TEXT
             );
             CREATE INDEX IF NOT EXISTS idx_nodes_book ON spatiotemporal_nodes(book_id);
@@ -130,6 +131,21 @@ impl Db {
         }
         if !entity_columns.iter().any(|c| c == "importance") {
             conn.execute("ALTER TABLE entities ADD COLUMN importance INTEGER", [])?;
+        }
+
+        let mut node_columns: Vec<String> = Vec::new();
+        {
+            let mut stmt = conn.prepare("PRAGMA table_info(spatiotemporal_nodes)")?;
+            let mut rows = stmt.query([])?;
+            while let Some(row) = rows.next()? {
+                node_columns.push(row.get::<_, String>(1)?);
+            }
+        }
+        if !node_columns.iter().any(|c| c == "importance") {
+            conn.execute(
+                "ALTER TABLE spatiotemporal_nodes ADD COLUMN importance INTEGER",
+                [],
+            )?;
         }
         Ok(())
     }
@@ -254,13 +270,14 @@ impl Db {
         region: Option<&str>,
         site: Option<&str>,
         movement_type: Option<&str>,
+        importance: Option<i64>,
         raw_json: &str,
     ) -> AppResult<i64> {
         let conn = self.conn.lock();
         conn.execute(
             "INSERT INTO spatiotemporal_nodes
-                (chapter_id, book_id, temporal_type, time_offset_days, world, region, site, movement_type, raw_json)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                (chapter_id, book_id, temporal_type, time_offset_days, world, region, site, movement_type, importance, raw_json)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
                 chapter_id,
                 book_id,
@@ -270,6 +287,7 @@ impl Db {
                 region,
                 site,
                 movement_type,
+                importance,
                 raw_json
             ],
         )?;
@@ -380,10 +398,11 @@ impl Db {
             }
         };
 
+        let spatial_importance = ext.spatial.as_ref().and_then(|x| x.importance);
         tx.execute(
             "INSERT INTO spatiotemporal_nodes
-                (chapter_id, book_id, temporal_type, time_offset_days, world, region, site, movement_type, raw_json)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                (chapter_id, book_id, temporal_type, time_offset_days, world, region, site, movement_type, importance, raw_json)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
                 chapter_id,
                 book_id,
@@ -393,6 +412,7 @@ impl Db {
                 region,
                 site,
                 movement,
+                spatial_importance,
                 raw
             ],
         )?;
@@ -425,7 +445,7 @@ impl Db {
                 chapter_id,
                 None,
                 it.usage_in_chapter.as_deref(),
-                None,
+                it.importance,
             )?;
             let eid = entity_id_tx(&tx, book_id, &it.category, &it.name)?;
             let site = it.acquired_from.as_ref().and_then(|a| a.spatial.clone());
@@ -551,7 +571,8 @@ impl Db {
         let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT c.id, c.book_id, c.chapter_index, c.title, c.raw_text_summary,
-                    n.temporal_type, n.time_offset_days, n.world, n.region, n.site, n.movement_type
+                    n.temporal_type, n.time_offset_days, n.world, n.region, n.site, n.movement_type,
+                    n.importance
              FROM chapters c
              LEFT JOIN spatiotemporal_nodes n ON n.id = (
                  SELECT id FROM spatiotemporal_nodes
@@ -575,6 +596,7 @@ impl Db {
                     region: r.get(8)?,
                     site: r.get(9)?,
                     movement_type: r.get(10)?,
+                    spatial_importance: r.get(11)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -702,9 +724,9 @@ mod tests {
             "chapter_title": "第一章",
             "narrative_perspective": "third_person",
             "temporal": {"type":"JUMP_FORWARD","raw_marker":"三年后","relative_delta_days":1095},
-            "spatial": {"world":"人界","region":"越国","site":"神手谷","movement_type":"LOCAL_MOVE","source_site":"广场"},
+            "spatial": {"world":"人界","region":"越国","site":"神手谷","movement_type":"LOCAL_MOVE","source_site":"广场","importance":4},
             "characters":[{"name":"韩立","action":"FIRST_APPEARANCE","role":"主角","description":"少年","importance":5}],
-            "items_and_skills":[{"name":"掌天瓶","category":"ITEM","acquired_from":{"spatial":"后山","temporal":"入夜"},"usage_in_chapter":"拾取","future_hook_flag":true}],
+            "items_and_skills":[{"name":"掌天瓶","category":"ITEM","importance":5,"acquired_from":{"spatial":"后山","temporal":"入夜"},"usage_in_chapter":"拾取","future_hook_flag":true}],
             "plot_summary":"韩立拾得掌天瓶"
         }))
         .unwrap()
@@ -733,6 +755,7 @@ mod tests {
         assert_eq!(ch.temporal_type.as_deref(), Some("JUMP_FORWARD"));
         assert_eq!(ch.time_offset_days, Some(1095));
         assert_eq!(ch.movement_type.as_deref(), Some("LOCAL_MOVE"));
+        assert_eq!(ch.spatial_importance, Some(4));
         assert_eq!(ch.raw_text_summary.as_deref(), Some("韩立拾得掌天瓶"));
 
         assert_eq!(bundle.entities.len(), 2);
@@ -740,10 +763,9 @@ mod tests {
         assert_eq!(hanli.entity_type, "CHARACTER");
         assert_eq!(hanli.first_appeared_chapter_index, Some(0));
         assert_eq!(hanli.importance, Some(5));
-        assert!(bundle
-            .entities
-            .iter()
-            .any(|e| e.name == "掌天瓶" && e.entity_type == "ITEM"));
+        let bottle = bundle.entities.iter().find(|e| e.name == "掌天瓶").unwrap();
+        assert_eq!(bottle.entity_type, "ITEM");
+        assert_eq!(bottle.importance, Some(5));
         assert_eq!(bundle.events.len(), 2);
 
         let books = db.list_books().unwrap();

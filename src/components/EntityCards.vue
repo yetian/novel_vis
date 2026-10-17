@@ -2,12 +2,19 @@
 import { computed, ref } from "vue";
 import { useLibraryStore } from "@/stores/library";
 import { chapterHeading } from "@/utils/chapter";
+import {
+  computeSpaceImportance,
+  computeThingImportance,
+  spaceImportanceLabel,
+  thingImportanceLabel,
+} from "@/utils/people";
 import { cleanPlace, cleanWorld } from "@/utils/space";
 import type { ChapterRow, EntityEventRow, EntityRow } from "@/types/schema";
 
 const library = useLibraryStore();
 const tab = ref<"spaces" | "things">("spaces");
 const query = ref("");
+const mainOnly = ref(false);
 
 const timeline = computed(() => library.timeline);
 const book = computed(() => timeline.value?.book ?? library.activeBook);
@@ -41,6 +48,9 @@ interface SpaceAgg {
   eventCount: number;
   firstChapter: number;
   lastChapter: number;
+  explicit: number | null;
+  span: number;
+  importance: number;
 }
 
 const spaces = computed<SpaceAgg[]>(() => {
@@ -65,10 +75,17 @@ const spaces = computed<SpaceAgg[]>(() => {
         eventCount: 0,
         firstChapter: c.chapter_index,
         lastChapter: c.chapter_index,
+        explicit: null,
+        span: 0,
+        importance: 1,
       };
       map.set(key, s);
     }
     s.chapters.push(c.chapter_index);
+    if (c.spatial_importance != null && c.spatial_importance >= 1 && c.spatial_importance <= 5) {
+      const score = Math.round(c.spatial_importance);
+      s.explicit = Math.max(s.explicit ?? 0, score);
+    }
   }
 
   for (const ev of events.value) {
@@ -101,18 +118,35 @@ const spaces = computed<SpaceAgg[]>(() => {
     }
   }
 
-  return [...map.values()]
+  const base = [...map.values()].map((s) => {
+    const indexes = [...s.chapters].sort((a, b) => a - b);
+    return {
+      ...s,
+      chapters: indexes,
+      firstChapter: indexes[0] ?? s.firstChapter,
+      lastChapter: indexes[indexes.length - 1] ?? s.lastChapter,
+    };
+  });
+  const maxEvents = Math.max(1, ...base.map((s) => s.eventCount));
+  const maxChars = Math.max(1, ...base.map((s) => s.chars.size));
+  const totalChapters = Math.max(1, chapters.value.length);
+  const totalSpan = Math.max(1, chapters.value.length - 1);
+
+  return base
     .map((s) => {
-      const indexes = [...s.chapters].sort((a, b) => a - b);
-      return {
-        ...s,
-        chapters: indexes,
-        firstChapter: indexes[0] ?? s.firstChapter,
-        lastChapter: indexes[indexes.length - 1] ?? s.lastChapter,
-      };
+      const span = Math.max(0, s.lastChapter - s.firstChapter);
+      const importance = computeSpaceImportance({
+        explicit: s.explicit,
+        coverage: s.chapters.length / totalChapters,
+        volume: s.eventCount / maxEvents,
+        spanRatio: span / totalSpan,
+        richness: s.chars.size / maxChars,
+      });
+      return { ...s, span, importance };
     })
     .sort(
       (a, b) =>
+        b.importance - a.importance ||
         b.chapters.length - a.chapters.length ||
         b.chars.size - a.chars.size ||
         a.firstChapter - b.firstChapter,
@@ -155,45 +189,70 @@ interface ThingAgg {
   acquiredSite: string;
   usage: string;
   related: string[];
+  explicit: number | null;
+  span: number;
+  importance: number;
 }
 
 const things = computed<ThingAgg[]>(() => {
   const nonChar = entities.value.filter((e) => e.entity_type !== "CHARACTER");
-  return nonChar
-    .map((entity) => {
-      const evs = eventsByEntity.value.get(entity.id) ?? [];
-      const acquire =
-        evs.find((e) => e.action_type === "ACQUIRE") ?? evs.find((e) => e.acquired_site) ?? evs[0];
-      const chapterSet = new Set(evs.map((e) => e.chapter_index));
-      const firstIndex =
-        entity.first_appeared_chapter_index ??
-        (evs.length ? Math.min(...evs.map((e) => e.chapter_index)) : null);
-      const lastIndex = evs.length ? Math.max(...evs.map((e) => e.chapter_index)) : firstIndex;
+  const base = nonChar.map((entity) => {
+    const evs = eventsByEntity.value.get(entity.id) ?? [];
+    const acquire =
+      evs.find((e) => e.action_type === "ACQUIRE") ?? evs.find((e) => e.acquired_site) ?? evs[0];
+    const chapterSet = new Set(evs.map((e) => e.chapter_index));
+    const firstIndex =
+      entity.first_appeared_chapter_index ??
+      (evs.length ? Math.min(...evs.map((e) => e.chapter_index)) : null);
+    const lastIndex = evs.length ? Math.max(...evs.map((e) => e.chapter_index)) : firstIndex;
 
-      const relatedIds = new Set<number>();
-      for (const ev of evs) {
-        for (const id of charsByChapter.value.get(ev.chapter_index) ?? []) relatedIds.add(id);
-      }
-      const related = [...relatedIds]
-        .map((id) => entityById.value.get(id)?.name ?? "")
-        .filter(Boolean)
-        .slice(0, 8);
+    const relatedIds = new Set<number>();
+    for (const ev of evs) {
+      for (const id of charsByChapter.value.get(ev.chapter_index) ?? []) relatedIds.add(id);
+    }
+    const related = [...relatedIds]
+      .map((id) => entityById.value.get(id)?.name ?? "")
+      .filter(Boolean)
+      .slice(0, 8);
+    const explicit =
+      entity.importance != null && entity.importance >= 1 && entity.importance <= 5
+        ? Math.round(entity.importance)
+        : null;
 
-      return {
-        entity,
-        count: evs.length,
-        chapterCount: chapterSet.size,
-        firstChapter: firstIndex != null ? chapterByIndex.value.get(firstIndex) ?? null : null,
-        lastChapter: lastIndex != null ? chapterByIndex.value.get(lastIndex) ?? null : null,
-        acquireChapter:
-          acquire != null ? chapterByIndex.value.get(acquire.chapter_index) ?? null : null,
-        acquiredSite: cleanPlace(acquire?.acquired_site),
-        usage: acquire?.impact_detail || entity.description || "",
-        related,
-      };
-    })
+    return {
+      entity,
+      count: evs.length,
+      chapterCount: chapterSet.size,
+      firstChapter: firstIndex != null ? chapterByIndex.value.get(firstIndex) ?? null : null,
+      lastChapter: lastIndex != null ? chapterByIndex.value.get(lastIndex) ?? null : null,
+      acquireChapter:
+        acquire != null ? chapterByIndex.value.get(acquire.chapter_index) ?? null : null,
+      acquiredSite: cleanPlace(acquire?.acquired_site),
+      usage: acquire?.impact_detail || entity.description || "",
+      related,
+      explicit,
+      span:
+        firstIndex != null && lastIndex != null ? Math.max(0, lastIndex - firstIndex) : 0,
+      importance: 1,
+    };
+  });
+  const maxCount = Math.max(1, ...base.map((t) => t.count));
+  const totalChapters = Math.max(1, chapters.value.length);
+  const totalSpan = Math.max(1, chapters.value.length - 1);
+
+  return base
+    .map((t) => ({
+      ...t,
+      importance: computeThingImportance({
+        explicit: t.explicit,
+        coverage: t.chapterCount / totalChapters,
+        volume: t.count / maxCount,
+        spanRatio: t.span / totalSpan,
+      }),
+    }))
     .sort(
       (a, b) =>
+        b.importance - a.importance ||
         b.count - a.count ||
         (a.firstChapter?.chapter_index ?? Number.MAX_SAFE_INTEGER) -
           (b.firstChapter?.chapter_index ?? Number.MAX_SAFE_INTEGER) ||
@@ -205,9 +264,12 @@ const nameOf = (id: number) => entityById.value.get(id)?.name ?? "";
 const categoryLabel: Record<string, string> = { ITEM: "物品", SKILL: "功法", LEGACY: "传承" };
 
 const filteredSpaces = computed(() => {
+  const base = mainOnly.value
+    ? spaces.value.filter((s) => s.importance >= 3)
+    : spaces.value;
   const q = query.value.trim();
-  if (!q) return spaces.value;
-  return spaces.value.filter(
+  if (!q) return base;
+  return base.filter(
     (s) =>
       s.site.includes(q) ||
       s.world.includes(q) ||
@@ -218,9 +280,12 @@ const filteredSpaces = computed(() => {
 });
 
 const filteredThings = computed(() => {
+  const base = mainOnly.value
+    ? things.value.filter((t) => t.importance >= 3)
+    : things.value;
   const q = query.value.trim();
-  if (!q) return things.value;
-  return things.value.filter(
+  if (!q) return base;
+  return base.filter(
     (t) =>
       t.entity.name.includes(q) ||
       (t.entity.description || "").includes(q) ||
@@ -260,11 +325,20 @@ const sortedByCount = (ids: Set<number>, counts: Map<number, number>) =>
             <i class="fa-solid fa-layer-group mr-1 text-jade-500" />空间与物品总览
           </h2>
           <p class="text-[11px] text-slate-500">
-            空间 {{ spaces.length }} · 物品/功法 {{ things.length }} · 空间按章节数/事件数排序，物品按出现次数排序
+            空间 {{ spaces.length }} · 物品/功法 {{ things.length }} ·
+            {{
+              tab === "spaces"
+                ? "地点按全书重要度排序（模型判断 + 覆盖章节 + 事件频率 + 跨度 + 人物丰富度）"
+                : "物品/功法按全书重要度排序（模型判断 + 覆盖章节 + 出现频率 + 跨度）"
+            }}
           </p>
         </div>
 
         <div class="ml-auto flex flex-wrap items-center gap-2">
+          <label class="flex cursor-pointer items-center gap-1.5 text-xs text-slate-400">
+            <input v-model="mainOnly" type="checkbox" class="accent-jade-500" />
+            仅重要
+          </label>
           <div class="flex rounded-lg bg-ink-900/60 p-1">
             <button
               class="btn !px-3 !py-1"
@@ -290,11 +364,12 @@ const sortedByCount = (ids: Set<number>, counts: Map<number, number>) =>
 
       <div class="min-h-0 flex-1 overflow-auto">
         <!-- 空间地点 -->
-        <table v-if="tab === 'spaces'" class="w-full min-w-[980px] border-collapse text-left text-sm">
+        <table v-if="tab === 'spaces'" class="w-full min-w-[1080px] border-collapse text-left text-sm">
           <thead class="sticky top-0 z-10 bg-ink-800/95 text-[11px] uppercase tracking-wide text-slate-500 backdrop-blur">
             <tr>
               <th class="w-12 px-3 py-2 font-medium">#</th>
               <th class="min-w-[180px] px-3 py-2 font-medium">空间</th>
+              <th class="w-28 px-3 py-2 font-medium">重要度</th>
               <th class="min-w-[160px] px-3 py-2 font-medium">首次出现</th>
               <th class="min-w-[190px] px-3 py-2 font-medium">出现 / 最近</th>
               <th class="min-w-[230px] px-3 py-2 font-medium">人物</th>
@@ -315,6 +390,21 @@ const sortedByCount = (ids: Set<number>, counts: Map<number, number>) =>
                   <span class="font-medium text-slate-100">{{ s.site }}</span>
                 </div>
                 <div v-if="spaceSubtitle(s)" class="mt-0.5 text-[11px] text-slate-500">{{ spaceSubtitle(s) }}</div>
+              </td>
+
+              <td class="px-3 py-2.5">
+                <div
+                  class="flex items-center gap-0.5"
+                  :title="`重要度 ${s.importance}/5${s.explicit != null ? ` · 模型判断 ${s.explicit}/5` : ''} · ${s.chapters.length} 章 / ${s.eventCount} 次事件 / ${s.chars.size} 人`"
+                >
+                  <span
+                    v-for="n in 5"
+                    :key="n"
+                    class="h-1.5 w-3 rounded-sm"
+                    :class="n <= s.importance ? 'bg-gold-400' : 'bg-ink-600'"
+                  />
+                </div>
+                <div class="mt-1 text-[10px] text-slate-500">{{ spaceImportanceLabel(s.importance) }}</div>
               </td>
 
               <td class="px-3 py-2.5 text-xs">
@@ -380,11 +470,12 @@ const sortedByCount = (ids: Set<number>, counts: Map<number, number>) =>
         </table>
 
         <!-- 物品功法 -->
-        <table v-else class="w-full min-w-[1080px] border-collapse text-left text-sm">
+        <table v-else class="w-full min-w-[1180px] border-collapse text-left text-sm">
           <thead class="sticky top-0 z-10 bg-ink-800/95 text-[11px] uppercase tracking-wide text-slate-500 backdrop-blur">
             <tr>
               <th class="w-12 px-3 py-2 font-medium">#</th>
               <th class="min-w-[170px] px-3 py-2 font-medium">名称</th>
+              <th class="w-28 px-3 py-2 font-medium">重要度</th>
               <th class="w-20 px-3 py-2 font-medium">类别</th>
               <th class="min-w-[160px] px-3 py-2 font-medium">首次出现</th>
               <th class="min-w-[150px] px-3 py-2 font-medium">获得地点</th>
@@ -412,6 +503,21 @@ const sortedByCount = (ids: Set<number>, counts: Map<number, number>) =>
                 <div v-if="t.entity.description" class="mt-0.5 line-clamp-2 text-[11px] text-slate-500">
                   {{ t.entity.description }}
                 </div>
+              </td>
+
+              <td class="px-3 py-2.5">
+                <div
+                  class="flex items-center gap-0.5"
+                  :title="`重要度 ${t.importance}/5${t.explicit != null ? ` · 模型判断 ${t.explicit}/5` : ''} · 出现 ${t.count} 次 / ${t.chapterCount} 章 / 跨度 ${t.span} 章`"
+                >
+                  <span
+                    v-for="n in 5"
+                    :key="n"
+                    class="h-1.5 w-3 rounded-sm"
+                    :class="n <= t.importance ? 'bg-gold-400' : 'bg-ink-600'"
+                  />
+                </div>
+                <div class="mt-1 text-[10px] text-slate-500">{{ thingImportanceLabel(t.importance) }}</div>
               </td>
 
               <td class="px-3 py-2.5">

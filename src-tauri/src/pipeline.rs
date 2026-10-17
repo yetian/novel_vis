@@ -679,19 +679,8 @@ fn normalize_value(value: &mut Value) {
                 .map(|s| !s.trim().is_empty())
                 .unwrap_or(false)
         });
-        // importance 容忍字符串/浮点，并夹紧到 1–5，避免小模型格式偏差导致整段解析失败。
         for c in chars.iter_mut() {
-            if let Some(slot) = c.get_mut("importance") {
-                let parsed = match slot {
-                    Value::Number(n) => n.as_i64().or_else(|| n.as_f64().map(|f| f.round() as i64)),
-                    Value::String(s) => s.trim().parse::<f64>().ok().map(|f| f.round() as i64),
-                    _ => None,
-                };
-                *slot = match parsed {
-                    Some(n) => Value::from(n.clamp(1, 5)),
-                    None => Value::Null,
-                };
-            }
+            normalize_importance(c);
         }
     }
     if let Some(Value::Array(items)) = obj.get_mut("items_and_skills") {
@@ -701,6 +690,30 @@ fn normalize_value(value: &mut Value) {
                 .map(|s| !s.trim().is_empty())
                 .unwrap_or(false)
         });
+        for it in items.iter_mut() {
+            normalize_importance(it);
+        }
+    }
+    if let Some(spatial) = obj.get_mut("spatial") {
+        normalize_importance(spatial);
+    }
+}
+
+/// importance 容忍字符串/浮点，并夹紧到 1–5，避免小模型格式偏差导致整段解析失败。
+fn normalize_importance(value: &mut Value) {
+    let Some(obj) = value.as_object_mut() else {
+        return;
+    };
+    if let Some(slot) = obj.get_mut("importance") {
+        let parsed = match slot {
+            Value::Number(n) => n.as_i64().or_else(|| n.as_f64().map(|f| f.round() as i64)),
+            Value::String(s) => s.trim().parse::<f64>().ok().map(|f| f.round() as i64),
+            _ => None,
+        };
+        *slot = match parsed {
+            Some(n) => Value::from(n.clamp(1, 5)),
+            None => Value::Null,
+        };
     }
 }
 
@@ -892,13 +905,14 @@ pub const SYSTEM_PROMPT: &str = r#"你是一个中文小说叙事结构分析引
     "region": "行政区 / 国度 / 大区等，必须来自原文；无则空字符串",
     "site": "具体地点（房间 / 街道 / 山谷等），必须来自原文；无则空字符串",
     "movement_type": "STAY" | "LOCAL_MOVE" | "TELEPORT" | "ASCENSION" | "DUNGEON_ENTER" | "DUNGEON_EXIT",
-    "source_site": "若发生移动，填写移动起点，否则空字符串"
+    "source_site": "若发生移动，填写移动起点，否则空字符串",
+    "importance": 1 到 5 的整数（5=全书核心舞台，4=主要地点，3=重要地点，2=次要地点，1=过场地点）
   },
   "characters": [
     { "name": "人物规范名", "action": "FIRST_APPEARANCE" | "ACTIVE" | "DEPARTURE" | "DEATH", "role": "该人物在本段中的身份/关系；无则空字符串", "description": "外貌或身份描述；无则空字符串", "importance": 1 到 5 的整数（5=全书核心主角，4=主要人物，3=重要配角，2=次要人物，1=路人/一次性角色） }
   ],
   "items_and_skills": [
-    { "name": "物品 / 功法 / 传承名", "category": "ITEM" | "SKILL" | "LEGACY", "acquired_from": { "spatial": "获得地点", "temporal": "获得时间" }, "usage_in_chapter": "本段中的用途", "future_hook_flag": true 或 false }
+    { "name": "物品 / 功法 / 传承名", "category": "ITEM" | "SKILL" | "LEGACY", "importance": 1 到 5 的整数（5=贯穿全书的核心物品/功法，4=关键物品，3=重要物品，2=次要物品，1=过场物品）, "acquired_from": { "spatial": "获得地点", "temporal": "获得时间" }, "usage_in_chapter": "本段中的用途", "future_hook_flag": true 或 false }
   ],
   "plot_summary": "一句话核心剧情摘要"
 }
@@ -912,7 +926,7 @@ pub const SYSTEM_PROMPT: &str = r#"你是一个中文小说叙事结构分析引
 6. 所有自然语言字段（人物名、地点、角色、描述、用途、摘要、raw_marker、reference_anchor 等）使用【简体中文】输出；仅 JSON 的键名与机器枚举值（如 CONTINUOUS / FIRST_APPEARANCE / ITEM）保持英文。
 7. 专有名词保留原文写法，不要翻译或音译。
 8. 输出务必精简完整：plot_summary ≤ 50 字，须包含本章最关键的人物/地点/事件；description / role / usage_in_chapter 各 ≤ 24 字。避免冗长导致 JSON 被截断。
-9. importance 只能填 1–5 的整数，依据原文中该人物的戏份、推动剧情的作用、出场频率与跨度判断；若本段信息有限，按本段估计即可，应用会在全书范围再做校准。同一人物在不同分块中应尽量给出一致的值；只被提及一两次的人物填 1–2。
+9. importance 只能填 1–5 的整数：人物按戏份、推动剧情的作用、出场频率与跨度判断；空间按本段地点承载剧情的分量判断；物品/功法按对剧情、战斗或人物成长的作用判断。若本段信息有限，按本段估计即可，应用会在全书范围再做校准。同类条目在不同分块中应尽量给出一致的值；只被提及一两次的填 1–2。
 10. 人物列表要尽量完整：列出本段中所有具名人物，包括主角、配角、反派、家人、同门、下属，以及只被提及但未直接出场者。名字必须能在本段正文中找到，避免捏造。
 11. 不要把人名列成作者、译者、序言作者、插图作者等现实身份；也不要把“众人/士兵/弟子”等无名群体或“他/她”等代词当作人物。
 12. 同一人物只输出一次：绰号、尊称、道号、简称、别名一律归并到本段最规范的全名，不要因称谓不同拆成多个人物。
@@ -1035,16 +1049,23 @@ mod tests {
     #[test]
     fn parse_extraction_coerces_importance() {
         let payload = json!({
+            "spatial": {"site": "神手谷", "importance": "4.4"},
             "characters": [
                 {"name": "韩立", "importance": "5"},
                 {"name": "厉飞雨", "importance": 9}
             ],
-            "items_and_skills": []
+            "items_and_skills": [
+                {"name": "掌天瓶", "importance": "3.6"},
+                {"name": "无名残卷", "importance": -1}
+            ]
         })
         .to_string();
         let (ext, _) = parse_extraction(&payload).unwrap();
+        assert_eq!(ext.spatial.as_ref().unwrap().importance, Some(4));
         assert_eq!(ext.characters[0].importance, Some(5));
         assert_eq!(ext.characters[1].importance, Some(5));
+        assert_eq!(ext.items_and_skills[0].importance, Some(4));
+        assert_eq!(ext.items_and_skills[1].importance, Some(1));
     }
 
     #[test]

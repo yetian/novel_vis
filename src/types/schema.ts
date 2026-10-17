@@ -73,6 +73,8 @@ export interface ChapterRow {
   region?: string | null;
   site?: string | null;
   movement_type?: string | null;
+  /** 1–5，本段地点的重要度（旧数据可能为空）。 */
+  spatial_importance?: number | null;
 }
 
 export interface EntityRow {
@@ -83,7 +85,7 @@ export interface EntityRow {
   first_appeared_chapter_id?: number | null;
   first_appeared_chapter_index?: number | null;
   description?: string | null;
-  /** 1–5，模型从原文判断的人物重要度（旧数据可能为空）。 */
+  /** 1–5，模型从原文判断的实体重要度（人物/物品/功法，旧数据可能为空）。 */
   importance?: number | null;
 }
 
@@ -150,6 +152,7 @@ export interface Spatial {
   site?: string | null;
   movement_type?: string;
   source_site?: string | null;
+  importance?: number | null;
 }
 
 export interface CharacterEntry {
@@ -171,6 +174,7 @@ export interface ItemSkillEntry {
   acquired_from?: AcquiredFrom | null;
   usage_in_chapter?: string | null;
   future_hook_flag: boolean;
+  importance?: number | null;
 }
 
 export interface SegmentExtraction {

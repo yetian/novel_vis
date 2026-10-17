@@ -3,6 +3,13 @@
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/) 与 [Conventional Commits](https://www.conventionalcommits.org/zh-hans/)。
 每个有意义的功能实现或修复均递增 PATCH 版本。
 
+## [0.1.24] - feat(importance)
+
+- 空间与物品/功法新增**全书范围重要度**（1–5）：模型判断 + 覆盖章节 + 频率 + 跨度，空间另计人物丰富度；模型分缺失时自动使用纯统计。
+- 空间/物品表按重要度降序排列，新增重要度条、等级标签、模型判断提示，以及“仅重要”过滤。
+- 抽取提示词要求空间节点与物品/功法同时输出 `importance`；物品重要度写入 `entities.importance`，空间重要度写入 `spatiotemporal_nodes.importance`（旧库自动迁移）。
+- 旧数据无需重抽即可使用统计重要度；重新抽取后可获得模型判断加成。
+
 ## [0.1.23] - feat(summary)
 
 - 新增**全书总览**：所有章节成功后由模型基于章节摘要生成（长书自动分批），显示在总览页顶部；旧数据可手动生成/重新生成。
