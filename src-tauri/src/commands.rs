@@ -228,16 +228,14 @@ pub async fn start_extraction(
 }
 
 /// 为已完成抽取的旧数据手动生成/刷新全书总览。
+/// 只读取数据库中的章节摘要，不要求源文件仍在原路径。
 #[tauri::command]
 pub async fn generate_book_summary(
     state: State<'_, AppState>,
     book_id: i64,
     config: LlmConfig,
 ) -> AppResult<String> {
-    ensure_book_loaded(&state, book_id)?;
-    let book = state
-        .book(book_id)
-        .ok_or_else(|| AppError::Internal("书籍原文不在内存中，请重新导入后再试。".into()))?;
+    let book = state.db.get_book(book_id)?;
     let summary = pipeline::summarize_book(
         &config,
         book_id,

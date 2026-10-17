@@ -21,6 +21,13 @@ const chapters = computed(() => timeline.value?.chapters ?? []);
 const entities = computed(() => timeline.value?.entities ?? []);
 const events = computed(() => timeline.value?.events ?? []);
 const book = computed(() => timeline.value?.book ?? library.activeBook);
+/// 旧数据可能把 “...” 之类占位符写进 summary，这里视为空，允许重新生成。
+const bookSummary = computed(() => {
+  const text = (book.value?.summary ?? "").trim();
+  if (!text) return "";
+  const meaningful = text.replace(/[\s\p{P}\p{S}]/gu, "");
+  return meaningful.length >= 20 ? text : "";
+});
 
 const characterEntities = computed(() => entities.value.filter((e) => e.entity_type === "CHARACTER"));
 const characterIds = computed(() => new Set(characterEntities.value.map((e) => e.id)));
@@ -287,23 +294,25 @@ async function generateSummary() {
           <h3 class="text-sm font-semibold text-slate-100">
             <i class="fa-solid fa-book-open mr-1 text-gold-400" />全书总览
           </h3>
-          <span v-if="book?.summary" class="text-[11px] text-slate-500">全书抽取完成后自动生成</span>
+          <span v-if="bookSummary" class="text-[11px] text-slate-500">全书抽取完成后自动生成</span>
           <button
             v-if="allExtracted && !generating"
             class="btn-ghost ml-auto !px-2 !py-1 text-xs"
-            :disabled="!book?.summary && generating"
             @click="generateSummary"
           >
-            <i class="fa-solid" :class="book?.summary ? 'fa-rotate' : 'fa-wand-magic-sparkles'" />
-            {{ book?.summary ? "重新生成" : "生成全书总览" }}
+            <i class="fa-solid" :class="bookSummary ? 'fa-rotate' : 'fa-wand-magic-sparkles'" />
+            {{ bookSummary ? "重新生成" : "生成全书总览" }}
           </button>
           <span v-else-if="generating" class="ml-auto text-xs text-gold-400">
             <i class="fa-solid fa-spinner fa-spin mr-1" />生成中…
           </span>
         </div>
 
-        <p v-if="book?.summary" class="mt-3 whitespace-pre-line text-sm leading-relaxed text-slate-300">
-          {{ book.summary }}
+        <p v-if="bookSummary" class="mt-3 whitespace-pre-line text-sm leading-relaxed text-slate-300">
+          {{ bookSummary }}
+        </p>
+        <p v-else-if="book?.summary" class="mt-2 text-sm text-slate-500">
+          现有总览内容无效（可能只生成了占位符），请点击右上角重新生成。
         </p>
         <p v-else-if="allExtracted" class="mt-2 text-sm text-slate-500">
           抽取已完成，可点击右上角生成全书总览；生成后会显示在这里。
