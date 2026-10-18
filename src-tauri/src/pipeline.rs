@@ -215,7 +215,8 @@ pub async fn run_extraction(
 }
 
 const BOOK_SUMMARY_SYSTEM: &str = r#"你是资深中文小说编辑。你只输出一个 JSON 对象，不得输出解释、Markdown 或代码块。
-输出格式：只包含一个 summary 字段，值为你撰写的完整总览正文。
+输出格式：只包含一个 summary 字段，值为你撰写的总览正文。
+summary 中只放总览正文：不要写标题、“全书总览”等字样、书名/作者、分点、小标题、章节列表、字数说明、免责声明，也不要写“好的”“以下是”等前言后语；只写连贯的正文段落。
 要求：只依据用户提供的章节/阶段摘要写作；不要编造未给出的情节；用简体中文；语言简洁、连贯、有概括力；保留关键人物与地点的原文名称。
 summary 必须是完整正文，不得只写省略号、占位符或复述材料；长度按用户要求。"#;
 
@@ -262,7 +263,7 @@ pub async fn summarize_book(
         let mut stage_summaries = Vec::with_capacity(batches.len());
         for (i, batch) in batches.iter().enumerate() {
             let prompt = format!(
-                "以下是《{}》第 {}/{} 组的章节摘要。请只根据这一组材料，用 180-260 字连贯概括本阶段的剧情推进、主要人物与地点变化。不要提前概括后续，不要分点，不要复述章节列表，保留关键专名。只输出 JSON，summary 字段填入完整正文，不要写省略号或占位符。\n\n{}",
+                "以下是《{}》第 {}/{} 组的章节摘要。请只根据这一组材料，用 180-260 字连贯概括本阶段的剧情推进、主要人物与地点变化。summary 只写正文：不要标题、书名/作者、前言、分点、章节列表；不要提前概括后续，不要复述材料，保留关键专名。只输出 JSON，summary 字段填入完整正文，不要写省略号或占位符。\n\n{}",
                 title,
                 i + 1,
                 batches.len(),
@@ -285,7 +286,7 @@ pub async fn summarize_book(
         "以下是全书的章节摘要"
     };
     let prompt = format!(
-        "《{title}》{author_line}\n{scope}。请写一段 300-500 字的全书总览，要求：\n1. 概括核心设定、世界/空间与主线冲突；\n2. 梳理开端—发展—转折—结局（若材料未覆盖结局，写到当前进展，不要猜测）；\n3. 点出 3-8 位关键人物及其关系或作用；\n4. 只依据下面材料，不编造未出现的情节，保留关键人物/地点的原文名称；\n5. 不分点、不复述章节列表，写成连贯的段落。\n只输出 JSON，summary 字段填入完整总览正文，不要写省略号或占位符。\n\n{}",
+        "《{title}》{author_line}\n{scope}。书名与作者仅用于识别作品，不要写进 summary。请写一段 300-500 字的全书总览正文，要求：\n1. 概括核心设定、世界/空间与主线冲突；\n2. 梳理开端—发展—转折—结局（若材料未覆盖结局，写到当前进展，不要猜测）；\n3. 点出 3-8 位关键人物及其关系或作用；\n4. 只依据下面材料，不编造未出现的情节，保留关键人物/地点的原文名称；\n5. 不分点、不复述章节列表，写成连贯的段落；\n6. summary 中只放正文，不要标题、“全书总览”等字样、书名/作者、前言、说明或章节列表。\n只输出 JSON，summary 字段填入完整总览正文，不要写省略号或占位符。\n\n{}",
         material
     );
     let summary = call_summary(config, &prompt).await?;
@@ -328,11 +329,11 @@ async fn call_summary(config: &LlmConfig, prompt: &str) -> AppResult<String> {
     }
 
     // 小模型容易把提示里的占位符原样抄回来；改用纯文本再试一次。
-    let retry_system = "你是资深中文小说编辑。请直接输出完整的简体中文总览正文，不要 JSON、解释、Markdown、省略号或占位符。";
+    let retry_system = "你是资深中文小说编辑。请直接输出总览正文，只写正文；不要 JSON、标题、书名/作者、前言、说明、分点、Markdown、省略号或占位符。";
     let json_sentence = "只输出 JSON，summary 字段填入完整正文，不要写省略号或占位符。";
     let json_sentence_long = "只输出 JSON，summary 字段填入完整总览正文，不要写省略号或占位符。";
     let plain_sentence =
-        "请直接输出完整的简体中文总览正文，不要输出 JSON、解释、Markdown、省略号或占位符。";
+        "请直接输出总览正文：不要标题、书名/作者、JSON、解释、Markdown、分点、省略号或占位符。";
     let mut retry_prompt = prompt
         .replace(json_sentence, plain_sentence)
         .replace(json_sentence_long, plain_sentence);

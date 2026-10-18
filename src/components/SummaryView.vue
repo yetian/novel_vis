@@ -288,38 +288,39 @@ async function generateSummary() {
         </div>
       </header>
 
-      <!-- 全书总览 -->
+      <!-- 全书总览：有内容时只展示正文 -->
       <section class="panel p-5">
-        <div class="flex flex-wrap items-center gap-2">
-          <h3 class="text-sm font-semibold text-slate-100">
-            <i class="fa-solid fa-book-open mr-1 text-gold-400" />全书总览
-          </h3>
-          <span v-if="bookSummary" class="text-[11px] text-slate-500">全书抽取完成后自动生成</span>
-          <button
-            v-if="allExtracted && !generating"
-            class="btn-ghost ml-auto !px-2 !py-1 text-xs"
-            @click="generateSummary"
-          >
-            <i class="fa-solid" :class="bookSummary ? 'fa-rotate' : 'fa-wand-magic-sparkles'" />
-            {{ bookSummary ? "重新生成" : "生成全书总览" }}
-          </button>
-          <span v-else-if="generating" class="ml-auto text-xs text-gold-400">
-            <i class="fa-solid fa-spinner fa-spin mr-1" />生成中…
-          </span>
-        </div>
-
-        <p v-if="bookSummary" class="mt-3 whitespace-pre-line text-sm leading-relaxed text-slate-300">
+        <p v-if="bookSummary" class="whitespace-pre-line text-sm leading-relaxed text-slate-300">
           {{ bookSummary }}
         </p>
-        <p v-else-if="book?.summary" class="mt-2 text-sm text-slate-500">
-          现有总览内容无效（可能只生成了占位符），请点击右上角重新生成。
-        </p>
-        <p v-else-if="allExtracted" class="mt-2 text-sm text-slate-500">
-          抽取已完成，可点击右上角生成全书总览；生成后会显示在这里。
-        </p>
-        <p v-else class="mt-2 text-sm text-slate-500">
-          完成全书抽取后，将自动汇总主线、关键人物与世界/空间信息。
-        </p>
+
+        <template v-else>
+          <div class="flex flex-wrap items-center gap-2">
+            <h3 class="text-sm font-semibold text-slate-100">
+              <i class="fa-solid fa-book-open mr-1 text-gold-400" />全书总览
+            </h3>
+            <button
+              v-if="allExtracted && !generating"
+              class="btn-ghost ml-auto !px-2 !py-1 text-xs"
+              @click="generateSummary"
+            >
+              <i class="fa-solid fa-wand-magic-sparkles" />生成全书总览
+            </button>
+            <span v-else-if="generating" class="ml-auto text-xs text-gold-400">
+              <i class="fa-solid fa-spinner fa-spin mr-1" />生成中…
+            </span>
+          </div>
+
+          <p v-if="book?.summary" class="mt-2 text-sm text-slate-500">
+            现有总览内容无效（可能只生成了占位符），请点击右上角生成新的总览。
+          </p>
+          <p v-else-if="allExtracted" class="mt-2 text-sm text-slate-500">
+            抽取已完成，可点击右上角生成全书总览。
+          </p>
+          <p v-else class="mt-2 text-sm text-slate-500">
+            完成全书抽取后，将自动汇总主线、关键人物与世界/空间信息。
+          </p>
+        </template>
       </section>
 
       <div class="space-y-2">
