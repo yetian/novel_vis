@@ -3,6 +3,7 @@ import { computed, ref, watch } from "vue";
 import SpaceGraph from "@/components/SpaceGraph.vue";
 import TimeScrubber from "@/components/TimeScrubber.vue";
 import { useLibraryStore } from "@/stores/library";
+import { altWheelToHorizontal } from "@/utils/scroll";
 import { cleanPlace, cleanWorld } from "@/utils/space";
 import type { SiteSelection } from "@/types/schema";
 
@@ -221,7 +222,7 @@ function seek(chapterIndex: number) {
               <i class="fa-solid fa-xmark" />关闭
             </button>
           </div>
-          <div class="mt-3 flex gap-3 overflow-x-auto pb-1">
+          <div class="mt-3 flex gap-3 overflow-x-auto pb-1" @wheel="altWheelToHorizontal">
             <button
               v-for="ev in selectedEvents"
               :key="ev.id"

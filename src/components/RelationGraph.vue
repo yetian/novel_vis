@@ -3,6 +3,7 @@ import { computed, ref } from "vue";
 import { useLibraryStore } from "@/stores/library";
 import { chapterHeading } from "@/utils/chapter";
 import { computeImportance, importanceLabel } from "@/utils/people";
+import { altWheelToHorizontal } from "@/utils/scroll";
 import { cleanPlace, cleanWorld } from "@/utils/space";
 import type { ChapterRow, EntityEventRow, EntityRow } from "@/types/schema";
 
@@ -321,7 +322,7 @@ const rows = computed(() => {
         </div>
       </header>
 
-      <div class="min-h-0 flex-1 overflow-auto">
+      <div class="min-h-0 flex-1 overflow-auto" @wheel="altWheelToHorizontal">
         <table class="w-full min-w-[1180px] border-collapse text-left text-sm">
           <thead class="sticky top-0 z-10 bg-ink-800/95 text-[11px] uppercase tracking-wide text-slate-500 backdrop-blur">
             <tr>

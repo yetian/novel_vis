@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from "vue";
+import { altWheelToHorizontal } from "@/utils/scroll";
 import { cleanPlace, cleanWorld } from "@/utils/space";
 import type { ChapterRow, EntityEventRow, EntityRow, SiteSelection } from "@/types/schema";
 
@@ -408,7 +409,7 @@ onMounted(() => requestAnimationFrame(scrollToActive));
 
 <template>
   <div class="graph-bg relative h-full w-full overflow-hidden">
-    <div ref="scroller" class="h-full w-full overflow-auto" @scroll="onScroll">
+    <div ref="scroller" class="h-full w-full overflow-auto" @scroll="onScroll" @wheel="altWheelToHorizontal">
       <svg
         :width="contentW"
         :height="contentH"
@@ -656,7 +657,7 @@ onMounted(() => requestAnimationFrame(scrollToActive));
       <div v-if="characterTotal > charTracks.length" class="text-slate-500">
         轨迹展示出场最多的 {{ charTracks.length }} 人，完整名单见「人物关系」。
       </div>
-      <div class="mt-1 text-slate-500">横轴=时间 · 每行=一个空间 · 点击行看地点 · 点击轨迹看人物</div>
+      <div class="mt-1 text-slate-500">横轴=时间 · 每行=一个空间 · 点击行看地点 · 点击轨迹看人物 · Alt+滚轮横向滚动</div>
     </div>
   </div>
 </template>

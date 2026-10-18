@@ -3,6 +3,11 @@
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/) 与 [Conventional Commits](https://www.conventionalcommits.org/zh-hans/)。
 每个有意义的功能实现或修复均递增 PATCH 版本。
 
+## [0.1.36] - feat(ux)
+
+- 时空画布、人物表、空间物品表与实体谱系支持 **Alt + 滚轮** 横向滚动；仅在容器存在横向溢出时拦截滚轮。
+- 画布图例增加 Alt+滚轮提示。
+
 ## [0.1.35] - fix(extraction)
 
 - 并发调度改为滑动窗口：完成一个章节立即补位，单个章节的 JSON 修复重试不再拖住整批任务。
