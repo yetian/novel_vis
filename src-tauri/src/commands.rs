@@ -316,12 +316,14 @@ pub async fn start_extraction(
 /// 只读取数据库中的章节摘要，不要求源文件仍在原路径。
 #[tauri::command]
 pub async fn generate_book_summary(
+    app: AppHandle,
     state: State<'_, AppState>,
     book_id: i64,
     config: LlmConfig,
 ) -> AppResult<String> {
     let book = state.db.get_book(book_id)?;
     let summary = pipeline::summarize_book(
+        &app,
         &config,
         book_id,
         &book.title,
@@ -332,6 +334,36 @@ pub async fn generate_book_summary(
     .ok_or_else(|| AppError::Internal("暂无章节摘要，无法生成全书总览".into()))?;
     state.db.set_book_summary(book_id, &summary)?;
     Ok(summary)
+}
+
+#[tauri::command]
+pub fn list_biographies(state: State<'_, AppState>, book_id: i64) -> AppResult<Vec<BiographyKey>> {
+    state.db.list_biographies(book_id)
+}
+
+#[tauri::command]
+pub fn get_biography(
+    state: State<'_, AppState>,
+    book_id: i64,
+    kind: String,
+    target_key: String,
+) -> AppResult<Option<BiographyRow>> {
+    state.db.get_biography(book_id, &kind, &target_key)
+}
+
+#[tauri::command]
+pub async fn generate_biography(
+    state: State<'_, AppState>,
+    book_id: i64,
+    kind: String,
+    target_key: String,
+    config: LlmConfig,
+) -> AppResult<BiographyRow> {
+    let (title, content) =
+        pipeline::generate_biography(&config, book_id, &kind, &target_key, &state.db).await?;
+    state
+        .db
+        .upsert_biography(book_id, &kind, &target_key, &title, &content)
 }
 
 /// 重新定位并关联书籍的源文件。`force` 为真时允许关联内容不一致的文件。

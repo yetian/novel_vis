@@ -18,13 +18,17 @@ const emit = defineEmits<{
 }>();
 
 // 布局：横轴 = 时间（章节），纵轴 = 空间（每行一个地点）。
-const ROW_H = 66;
-const COL_W = 46;
+const zoom = ref(1);
+const ROW_H = computed(() => Math.round(66 * zoom.value));
+const COL_W = computed(() => Math.round(46 * zoom.value));
 const LEFT = 176;
 const TOP = 44;
 const BOTTOM = 28;
 const MAX_CHARS = 36;
 const MAX_RELATIONS = 180;
+const ZOOM_MIN = 0.1;
+const ZOOM_MAX = 1.6;
+const ZOOM_STEP = 0.1;
 
 // 7 色人物调色板（高对比、深色背景可读）；超过 7 人时循环使用。
 const PERSON_COLORS = ["#f0b429", "#3ddc97", "#4dabf7", "#b197fc", "#ff8787", "#ffa94d", "#f783ac"];
@@ -118,13 +122,13 @@ const rowCharCounts = computed(() => {
 });
 const charCountOf = (row: SpaceRow) => rowCharCounts.value.get(row.key)?.size ?? 0;
 
-const xOf = (chapterIndex: number) => LEFT + chapterIndex * COL_W + COL_W / 2;
-const rowTop = (row: number) => TOP + row * ROW_H;
-const rowY = (row: number) => rowTop(row) + ROW_H / 2;
+const xOf = (chapterIndex: number) => LEFT + chapterIndex * COL_W.value + COL_W.value / 2;
+const rowTop = (row: number) => TOP + row * ROW_H.value;
+const rowY = (row: number) => rowTop(row) + ROW_H.value / 2;
 
-const contentW = computed(() => LEFT + Math.max(1, props.chapters.length) * COL_W + 24);
-const contentH = computed(() => TOP + Math.max(1, spaceRows.value.length) * ROW_H + BOTTOM);
-const bodyH = computed(() => Math.max(1, spaceRows.value.length) * ROW_H);
+const contentW = computed(() => LEFT + Math.max(1, props.chapters.length) * COL_W.value + 24);
+const contentH = computed(() => TOP + Math.max(1, spaceRows.value.length) * ROW_H.value + BOTTOM);
+const bodyH = computed(() => Math.max(1, spaceRows.value.length) * ROW_H.value);
 
 const tickStep = computed(() => Math.max(1, Math.ceil(props.chapters.length / 18)));
 const ticks = computed(() => props.chapters.filter((_, i) => i % tickStep.value === 0));
@@ -367,7 +371,7 @@ function onCanvasClick(e: MouseEvent) {
   const x = e.clientX - rect.left;
   const y = e.clientY - rect.top;
   if (y < TOP || x < LEFT) return;
-  const idx = Math.round((x - LEFT - COL_W / 2) / COL_W);
+  const idx = Math.round((x - LEFT - COL_W.value / 2) / COL_W.value);
   const clamped = Math.max(0, Math.min(props.chapters.length - 1, idx));
   emit("update:activeIndex", clamped);
   emit("select-entity", null);
@@ -378,6 +382,23 @@ function onScroll() {
   if (!el) return;
   scrollLeft.value = el.scrollLeft;
   scrollTop.value = el.scrollTop;
+}
+
+function setZoom(value: number) {
+  zoom.value = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(value * 100) / 100));
+  requestAnimationFrame(scrollToActive);
+}
+
+function zoomIn() {
+  setZoom(zoom.value + ZOOM_STEP);
+}
+
+function zoomOut() {
+  setZoom(zoom.value - ZOOM_STEP);
+}
+
+function resetZoom() {
+  setZoom(1);
 }
 
 async function scrollToActive() {
@@ -627,6 +648,13 @@ onMounted(() => requestAnimationFrame(scrollToActive));
     <div
       class="absolute bottom-3 right-3 rounded-lg border border-ink-600/50 bg-ink-800/85 px-3 py-2 text-[11px] text-slate-400 backdrop-blur"
     >
+      <div class="mb-1.5 flex items-center gap-1">
+        <span class="mr-1 text-slate-500">缩放</span>
+        <button class="btn-ghost !px-1.5 !py-0.5 text-xs" title="缩小" @click="zoomOut">−</button>
+        <span class="w-10 text-center tabular-nums text-slate-300">{{ Math.round(zoom * 100) }}%</span>
+        <button class="btn-ghost !px-1.5 !py-0.5 text-xs" title="放大" @click="zoomIn">+</button>
+        <button class="btn-ghost !px-2 !py-0.5 text-[11px]" title="恢复 100%" @click="resetZoom">重置</button>
+      </div>
       <div class="mb-1 font-medium text-slate-300">
         {{ spaceRows.length }} 个空间 · {{ characterTotal }} 位人物 · {{ chapters.length }} 章
       </div>

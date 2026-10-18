@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
+import EntityDetailDialog from "@/components/EntityDetailDialog.vue";
 import { useLibraryStore } from "@/stores/library";
+import { biographyKey } from "@/utils/biography";
 import { chapterHeading } from "@/utils/chapter";
 import {
   computeSpaceImportance,
@@ -10,12 +12,13 @@ import {
 } from "@/utils/people";
 import { altWheelToHorizontal } from "@/utils/scroll";
 import { cleanPlace, cleanWorld } from "@/utils/space";
-import type { ChapterRow, EntityEventRow, EntityRow } from "@/types/schema";
+import type { ChapterRow, DetailTarget, EntityEventRow, EntityRow } from "@/types/schema";
 
 const library = useLibraryStore();
 const tab = ref<"spaces" | "things">("spaces");
 const query = ref("");
 const mainOnly = ref(false);
+const detail = ref<DetailTarget | null>(null);
 
 const timeline = computed(() => library.timeline);
 const book = computed(() => timeline.value?.book ?? library.activeBook);
@@ -312,6 +315,82 @@ const sortedByCount = (ids: Set<number>, counts: Map<number, number>) =>
   [...ids].sort(
     (a, b) => (counts.get(b) ?? 0) - (counts.get(a) ?? 0) || nameOf(a).localeCompare(nameOf(b)),
   );
+
+const hasBiography = (kind: string, key: string) =>
+  library.biographyKeys.includes(biographyKey(kind, key));
+
+const placeOf = (chapter: ChapterRow | null) =>
+  chapter
+    ? [cleanWorld(chapter.world), cleanPlace(chapter.region), cleanPlace(chapter.site)]
+        .filter(Boolean)
+        .join(" · ")
+    : "";
+
+function detailEvent(event: EntityEventRow) {
+  const chapter = chapterByIndex.value.get(event.chapter_index) ?? null;
+  return {
+    id: event.id,
+    chapter_index: event.chapter_index,
+    chapter_title: chapter ? chapterHeading(chapter, book.value?.title) : "",
+    action: event.action_type,
+    role: event.role,
+    place: placeOf(chapter),
+    time_type: chapter?.temporal_type ?? null,
+    time_offset_days: chapter?.time_offset_days ?? null,
+    detail: event.impact_detail,
+  };
+}
+
+function openSpaceDetail(space: SpaceAgg) {
+  const chapterIndexes = new Set(space.chapters);
+  const spaceEvents = events.value
+    .filter((event) => chapterIndexes.has(event.chapter_index))
+    .map(detailEvent);
+  detail.value = {
+    kind: "space",
+    key: space.key,
+    title: space.site,
+    subtitle: spaceSubtitle(space),
+    icon: "fa-mountain-sun",
+    metadata: [
+      { label: "世界", value: space.world },
+      { label: "区域", value: space.region || "" },
+      { label: "重要度", value: `${space.importance}/5 · ${spaceImportanceLabel(space.importance)}` },
+      { label: "出现章节", value: `${space.chapters.length} 章 · ${space.eventCount} 次事件` },
+      { label: "首次 / 最近", value: `第 ${space.firstChapter + 1} / ${space.lastChapter + 1} 章` },
+      { label: "人物", value: [...space.chars].map(nameOf).join("、") },
+      { label: "物品 / 功法", value: [...space.items].map(nameOf).join("、") },
+    ],
+    events: spaceEvents,
+  };
+}
+
+function openThingDetail(thing: ThingAgg) {
+  const thingEvents = (eventsByEntity.value.get(thing.entity.id) ?? []).map(detailEvent);
+  detail.value = {
+    kind: thing.entity.entity_type.toLowerCase() as DetailTarget["kind"],
+    key: thing.entity.name,
+    title: thing.entity.name,
+    subtitle: thing.entity.description || categoryLabel[thing.entity.entity_type] || "",
+    icon: thing.entity.entity_type === "SKILL" ? "fa-hand-fist" : "fa-gem",
+    metadata: [
+      { label: "类别", value: categoryLabel[thing.entity.entity_type] ?? thing.entity.entity_type },
+      { label: "描述", value: thing.entity.description || "" },
+      { label: "重要度", value: `${thing.importance}/5 · ${thingImportanceLabel(thing.importance)}` },
+      { label: "出现", value: `${thing.count} 次 / ${thing.chapterCount} 章` },
+      {
+        label: "首次 / 最近",
+        value: `${thing.firstChapter ? `第 ${thing.firstChapter.chapter_index + 1} 章` : "—"} / ${
+          thing.lastChapter ? `第 ${thing.lastChapter.chapter_index + 1} 章` : "—"
+        }`,
+      },
+      { label: "获得地点", value: thing.acquiredSite },
+      { label: "关联人物", value: thing.related.join("、") },
+      { label: "使用 / 描述", value: thing.usage },
+    ],
+    events: thingEvents,
+  };
+}
 </script>
 
 <template>
@@ -396,8 +475,23 @@ const sortedByCount = (ids: Set<number>, counts: Map<number, number>) =>
 
               <td class="px-3 py-2.5">
                 <div class="flex items-center gap-2">
-                  <i class="fa-solid fa-location-dot text-[11px] text-gold-400" />
-                  <span class="font-medium text-slate-100">{{ s.site }}</span>
+                  <button class="flex min-w-0 items-center gap-2 text-left" @click.stop="openSpaceDetail(s)">
+                    <i class="fa-solid fa-location-dot text-[11px] text-gold-400" />
+                    <span class="truncate font-medium text-slate-100 hover:text-jade-300">{{ s.site }}</span>
+                  </button>
+                  <button
+                    class="text-slate-500 transition hover:text-jade-300"
+                    title="查看详情 / 传记"
+                    aria-label="查看地点详情"
+                    @click.stop="openSpaceDetail(s)"
+                  >
+                    <i class="fa-solid fa-circle-info text-[11px]" />
+                  </button>
+                  <i
+                    v-if="hasBiography('space', s.key)"
+                    class="fa-solid fa-feather-pointed text-[11px] text-gold-400"
+                    title="已有传记"
+                  />
                 </div>
                 <div v-if="spaceSubtitle(s)" class="mt-0.5 text-[11px] text-slate-500">{{ spaceSubtitle(s) }}</div>
               </td>
@@ -504,11 +598,26 @@ const sortedByCount = (ids: Set<number>, counts: Map<number, number>) =>
 
               <td class="px-3 py-2.5">
                 <div class="flex items-center gap-2">
+                  <button class="flex min-w-0 items-center gap-2 text-left" @click.stop="openThingDetail(t)">
+                    <i
+                      class="fa-solid text-[11px] text-gold-400"
+                      :class="t.entity.entity_type === 'SKILL' ? 'fa-hand-fist' : 'fa-gem'"
+                    />
+                    <span class="truncate font-medium text-slate-100 hover:text-jade-300">{{ t.entity.name }}</span>
+                  </button>
+                  <button
+                    class="text-slate-500 transition hover:text-jade-300"
+                    title="查看详情 / 传记"
+                    aria-label="查看物品详情"
+                    @click.stop="openThingDetail(t)"
+                  >
+                    <i class="fa-solid fa-circle-info text-[11px]" />
+                  </button>
                   <i
-                    class="fa-solid text-[11px] text-gold-400"
-                    :class="t.entity.entity_type === 'SKILL' ? 'fa-hand-fist' : 'fa-gem'"
+                    v-if="hasBiography(t.entity.entity_type.toLowerCase(), t.entity.name)"
+                    class="fa-solid fa-feather-pointed text-[11px] text-gold-400"
+                    title="已有传记"
                   />
-                  <span class="font-medium text-slate-100">{{ t.entity.name }}</span>
                 </div>
                 <div v-if="t.entity.description" class="mt-0.5 line-clamp-2 text-[11px] text-slate-500">
                   {{ t.entity.description }}
@@ -599,5 +708,12 @@ const sortedByCount = (ids: Set<number>, counts: Map<number, number>) =>
         </p>
       </div>
     </div>
+
+    <EntityDetailDialog
+      :open="!!detail"
+      :target="detail"
+      :book-id="book?.id ?? null"
+      @close="detail = null"
+    />
   </div>
 </template>

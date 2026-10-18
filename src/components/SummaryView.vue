@@ -3,6 +3,7 @@ import { computed, ref } from "vue";
 import { save } from "@tauri-apps/plugin-dialog";
 import { api, isTauri } from "@/api/tauri";
 import { summaryCsv, summaryJson } from "@/exporter/summary";
+import { useExtractionStore } from "@/stores/extraction";
 import { useLibraryStore } from "@/stores/library";
 import { useLlmStore } from "@/stores/llm";
 import { useUiStore } from "@/stores/ui";
@@ -15,6 +16,7 @@ import type { ChapterRow, EntityEventRow, EntityRow } from "@/types/schema";
 const library = useLibraryStore();
 const llm = useLlmStore();
 const ui = useUiStore();
+const extraction = useExtractionStore();
 const query = ref("");
 const generating = ref(false);
 
@@ -29,6 +31,13 @@ const bookSummary = computed(() => {
   if (!text) return "";
   const meaningful = text.replace(/[\s\p{P}\p{S}]/gu, "");
   return meaningful.length >= 20 ? text : "";
+});
+
+const summaryProgress = computed(() => {
+  const id = book.value?.id;
+  if (!id) return null;
+  const progress = extraction.jobFor(id)?.progress;
+  return progress?.phase === "summarizing" ? progress : null;
 });
 
 const characterEntities = computed(() => entities.value.filter((e) => e.entity_type === "CHARACTER"));
@@ -290,6 +299,14 @@ async function exportSummary(format: "json" | "csv") {
               <template v-if="book?.author">{{ book.author }} · </template>
               共 {{ chapters.length }} 章 · 已生成摘要 {{ stats.summarized }} 章
             </p>
+            <p
+              v-if="summaryProgress && summaryProgress.current < summaryProgress.total"
+              class="mt-1 text-[11px] text-gold-400"
+            >
+              <i class="fa-solid fa-spinner fa-spin mr-1" />
+              {{ summaryProgress.message || "正在生成全书总览…" }}
+              第 {{ summaryProgress.current }}/{{ summaryProgress.total }} 步
+            </p>
           </div>
           <input v-model="query" class="input max-w-xs !py-1.5 text-xs" placeholder="搜索章节 / 摘要 / 人物 / 地点…" />
         </div>
@@ -321,7 +338,7 @@ async function exportSummary(format: "json" | "csv") {
       <!-- 全书总览：有内容时只展示正文 -->
       <section class="panel group relative p-5">
         <template v-if="bookSummary">
-          <p class="whitespace-pre-line text-sm leading-relaxed text-slate-300">
+          <p class="max-h-[60vh] overflow-y-auto whitespace-pre-line pr-2 text-sm leading-relaxed text-slate-300">
             {{ bookSummary }}
           </p>
           <div

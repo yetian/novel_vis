@@ -1,5 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  BiographyKey,
+  BiographyRow,
   BookInspection,
   BookRow,
   GpuStatus,
@@ -49,6 +51,14 @@ export const api = {
   cancelExtraction: (bookId: number) => guard(() => invoke<void>("cancel_extraction", { bookId })),
   generateBookSummary: (bookId: number, config: LlmConfig) =>
     guard(() => invoke<string>("generate_book_summary", { bookId, config })),
+  listBiographies: (bookId: number) =>
+    guard(() => invoke<BiographyKey[]>("list_biographies", { bookId })),
+  getBiography: (bookId: number, kind: string, targetKey: string) =>
+    guard(() => invoke<BiographyRow | null>("get_biography", { bookId, kind, targetKey })),
+  generateBiography: (bookId: number, kind: string, targetKey: string, config: LlmConfig) =>
+    guard(() =>
+      invoke<BiographyRow>("generate_biography", { bookId, kind, targetKey, config }),
+    ),
   readTextFile: (path: string) => guard(() => invoke<string>("read_text_file", { path })),
   writeTextFile: (path: string, content: string) =>
     guard(() => invoke<void>("write_text_file", { path, content })),

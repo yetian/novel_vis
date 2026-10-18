@@ -1,6 +1,6 @@
 # ChronoSpace Reader · 架构设计蓝图（design.md）
 
-> 当前版本：**v0.1.41**
+> 当前版本：**v0.1.43**
 > 本文档描述系统架构、数据流、SQLite 关系模式、状态机、协议契约与 UI 组件层级，并与代码库保持同步。
 
 ---
@@ -191,6 +191,15 @@ erDiagram
     TEXT acquired_site
     TEXT impact_detail
   }
+  biographies {
+    INTEGER id PK
+    INTEGER book_id FK
+    TEXT kind
+    TEXT target_key
+    TEXT title
+    TEXT content
+    TEXT updated_at
+  }
 ```
 
 - 唯一约束：`chapters(book_id, chapter_index)`、`entities(book_id, type, name)`。
@@ -263,7 +272,7 @@ erDiagram
 
 **章题提取**：EPUB 章节优先读取正文 `h1/h2/h3`，并对“卷名 vs 章名”按标题形态打分（`第X章/回/节` 优先于 `第X卷/部/篇`）；`<title>` 仅在无正文标题时使用，且会剔除纯书名或“书名 - 章名”中的书名部分。MOBI/无目录场景用 `guess_title_with_book` 跳过书名行。旧数据在重新加载源文件时由 `repair_titles_if_unsplit` 自动修正。
 
-**全书总览**：整本书全部章节成功后，按章节摘要生成 `books.summary`。章节摘要总长超过 5000 字时先分批生成阶段摘要，再汇总为 300–500 字总览；摘要只保存正文，不包含标题、书名/作者、前言、分点或章节列表。失败只记日志，不影响抽取结果。输出会校验有效字数，若模型只返回“...”“……”等占位符，则自动改用纯文本提示重试一次。旧数据可通过 `generate_book_summary` 手动生成，该命令只读数据库中的章节摘要，不要求源文件仍在原路径。
+**全书总览**：整本书全部章节成功后，按章节摘要生成 `books.summary`。章节摘要总长超过 5000 字时先分批生成阶段摘要，再汇总为 300–500 字总览；**最终总览与所有阶段摘要按顺序拼接后存入 `books.summary`**，前端限制面板高度并在内部滚动展示。分批与最终汇总都会通过 `summarizing` 进度事件上报步骤。失败只记日志，不影响抽取结果。输出会校验有效字数，若模型只返回“...”“……”等占位符，则自动改用纯文本提示重试一次。旧数据可通过 `generate_book_summary` 手动生成，该命令只读数据库中的章节摘要，不要求源文件仍在原路径。
 
 ---
 
@@ -325,7 +334,10 @@ sequenceDiagram
 | `test_connection` | `config: LlmConfig` | `boolean` | 连通性探测 |
 | `gpu_status` | `config: LlmConfig` | `GpuStatus` | 显存占用与建议并发数（`nvidia-smi` + Ollama `/api/ps`，尽力而为） |
 | `start_extraction` | `request: ExtractionRequest` | `ChapterExtractionResult[]` | 批量抽取；全部成功后自动生成全书总览 |
-| `generate_book_summary` | `bookId: number, config: LlmConfig` | `string` | 为已有抽取数据手动生成/刷新全书总览 |
+| `generate_book_summary` | `bookId: number, config: LlmConfig` | `string` | 为已有抽取数据手动生成/刷新全书总览；分批进度通过事件推送 |
+| `list_biographies` | `bookId: number` | `BiographyKey[]` | 已生成传记的 kind/key 索引 |
+| `get_biography` | `bookId, kind, targetKey` | `BiographyRow \| null` | 读取单条传记 |
+| `generate_biography` | `bookId, kind, targetKey, config` | `BiographyRow` | 本地模型生成/重生成传记（≤2000 字） |
 | `pause_extraction` / `resume_extraction` / `cancel_extraction` | `bookId: number` | `void` | 任务控制 |
 | `read_text_file` | `path: string` | `string` | 辅助读取 |
 | `write_text_file` | `path: string, content: string` | `void` | 导出写入（HTML / JSON / CSV），Rust 侧直接落盘 |
@@ -391,11 +403,12 @@ App.vue
 │   ├── LibraryView.vue      导入区 · 统计 · ExtractionRunner · 藏书卡片(总览/抽取/画布/导出/删除)
 │   │   └── ExtractionRunner.vue   开始/暂停/继续/取消 · 进度条 · 日志
 │   ├── SpacetimeCanvas.vue
-│   │   ├── SpaceGraph.vue          时间 × 空间矩阵：横轴章节、每行一个地点；人物首现圆点 + 跨时空轨迹 + 关系虚线 + 当前行高亮
+│   │   ├── SpaceGraph.vue          时间 × 空间矩阵：横轴章节、每行一个地点；人物首现圆点 + 跨时空轨迹 + 关系虚线 + 当前行高亮 + 缩放控件
 │   │   └── TimeScrubber.vue        章节轴 + 虚拟时间线双滑块 + 当前章节信息
 │   ├── SummaryView.vue       总览：全书总览 + 逐章摘要 + 统计 + 本章主要人物/首现人物/时空标签（点击书籍默认进入）
 │   ├── RelationGraph.vue     人物总览表：全书重要度排序，含首现/最近出场、主要活动地、同章共现区间；排除作者
 │   ├── EntityCards.vue       空间 / 物品总览表：全书重要度、事件数、最近章节、关联人物/物品与获得章节
+│   ├── EntityDetailDialog.vue 人物/地点/物品详情：传记、元数据、垂直时间线三个标签页；按需生成/重生成传记
 │   └── LlmSettings.vue       引擎选择 · 模型探测 · 参数 · 连接测试 · 数据管理
 ├── ConfirmDialog.vue         全局确认框（ui.askConfirm）
 └── ToastHost.vue             全局通知

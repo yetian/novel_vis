@@ -1,6 +1,7 @@
 import { defineStore } from "pinia";
 import { api } from "@/api/tauri";
 import { errText } from "@/utils/error";
+import { biographyKey } from "@/utils/biography";
 import type { BookInspection, BookRow, TimelineBundle } from "@/types/schema";
 import { useUiStore, type ViewKey } from "./ui";
 
@@ -14,6 +15,7 @@ export const useLibraryStore = defineStore("library", {
     books: [] as BookRow[],
     activeBookId: null as number | null,
     timeline: null as TimelineBundle | null,
+    biographyKeys: [] as string[],
     loading: false,
     ingesting: false,
     pending: null as PendingImport | null,
@@ -101,9 +103,26 @@ export const useLibraryStore = defineStore("library", {
       if (!this.activeBookId) return;
       try {
         this.timeline = await api.getTimeline(this.activeBookId);
+        await this.loadBiographyKeys();
       } catch (e) {
         useUiStore().toast(`读取时空数据失败：${errText(e)}`, "error");
       }
+    },
+    async loadBiographyKeys() {
+      if (!this.activeBookId) {
+        this.biographyKeys = [];
+        return;
+      }
+      try {
+        const keys = await api.listBiographies(this.activeBookId);
+        this.biographyKeys = keys.map((item) => biographyKey(item.kind, item.target_key));
+      } catch {
+        this.biographyKeys = [];
+      }
+    },
+    addBiographyKey(kind: string, targetKey: string) {
+      const key = biographyKey(kind, targetKey);
+      if (!this.biographyKeys.includes(key)) this.biographyKeys.push(key);
     },
     async remove(bookId: number) {
       const ui = useUiStore();

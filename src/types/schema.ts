@@ -65,6 +65,39 @@ export interface SourceCheck {
   message: string;
 }
 
+export interface BiographyKey {
+  kind: string;
+  target_key: string;
+}
+
+export interface BiographyRow extends BiographyKey {
+  title: string;
+  content: string;
+  updated_at: string;
+}
+
+export interface DetailEvent {
+  id: number;
+  chapter_index: number;
+  chapter_title: string;
+  action: string;
+  role?: string | null;
+  place?: string | null;
+  time_type?: string | null;
+  time_offset_days?: number | null;
+  detail?: string | null;
+}
+
+export interface DetailTarget {
+  kind: "character" | "item" | "skill" | "legacy" | "space";
+  key: string;
+  title: string;
+  subtitle?: string;
+  icon?: string;
+  metadata: { label: string; value: string }[];
+  events: DetailEvent[];
+}
+
 export interface ChapterRow {
   id: number;
   book_id: number;

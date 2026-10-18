@@ -237,6 +237,23 @@ pub struct EntityEventRow {
     pub impact_detail: Option<String>,
 }
 
+/// 人物 / 地点 / 物品的按需传记。
+#[derive(Debug, Clone, Serialize)]
+pub struct BiographyRow {
+    pub kind: String,
+    pub target_key: String,
+    pub title: String,
+    pub content: String,
+    pub updated_at: String,
+}
+
+/// 已生成传记的索引项（用于列表面板显示图标）。
+#[derive(Debug, Clone, Serialize)]
+pub struct BiographyKey {
+    pub kind: String,
+    pub target_key: String,
+}
+
 /// 画布聚合数据
 #[derive(Debug, Clone, Serialize)]
 pub struct TimelineBundle {

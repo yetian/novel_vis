@@ -1,15 +1,18 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
+import EntityDetailDialog from "@/components/EntityDetailDialog.vue";
 import { useLibraryStore } from "@/stores/library";
+import { biographyKey } from "@/utils/biography";
 import { chapterHeading } from "@/utils/chapter";
 import { computeImportance, importanceLabel } from "@/utils/people";
 import { altWheelToHorizontal } from "@/utils/scroll";
 import { cleanPlace, cleanWorld } from "@/utils/space";
-import type { ChapterRow, EntityEventRow, EntityRow } from "@/types/schema";
+import type { ChapterRow, DetailTarget, EntityEventRow, EntityRow } from "@/types/schema";
 
 const library = useLibraryStore();
 const query = ref("");
 const mainOnly = ref(false);
+const detail = ref<DetailTarget | null>(null);
 
 const timeline = computed(() => library.timeline);
 const book = computed(() => timeline.value?.book ?? library.activeBook);
@@ -287,6 +290,61 @@ const rows = computed(() => {
       r.relations.some((rel) => rel.name.includes(q)),
   );
 });
+
+const hasBiography = (row: PersonRow) =>
+  library.biographyKeys.includes(biographyKey("character", row.entity.name));
+
+const placeOf = (chapter: ChapterRow | null) =>
+  chapter
+    ? [cleanWorld(chapter.world), cleanPlace(chapter.region), cleanPlace(chapter.site)]
+        .filter(Boolean)
+        .join(" · ")
+    : "";
+
+function openDetail(row: PersonRow) {
+  const events = (eventsByChar.value.get(row.entity.id) ?? []).map((event) => {
+    const chapter = chapterByIndex.value.get(event.chapter_index) ?? null;
+    return {
+      id: event.id,
+      chapter_index: event.chapter_index,
+      chapter_title: chapter ? chapterHeading(chapter, book.value?.title) : "",
+      action: event.action_type,
+      role: event.role,
+      place: placeOf(chapter),
+      time_type: chapter?.temporal_type ?? null,
+      time_offset_days: chapter?.time_offset_days ?? null,
+      detail: event.impact_detail,
+    };
+  });
+  detail.value = {
+    kind: "character",
+    key: row.entity.name,
+    title: row.entity.name,
+    subtitle: row.role || row.entity.description || "",
+    icon: "fa-user",
+    metadata: [
+      { label: "简介", value: row.entity.description || "" },
+      { label: "身份 / 关系", value: row.role || "" },
+      { label: "重要度", value: `${row.importance}/5 · ${importanceLabel(row.importance)}` },
+      {
+        label: "首次出场",
+        value: row.firstChapter
+          ? `第 ${row.firstChapter.chapter_index + 1} 章 · ${chapterHeading(row.firstChapter, book.value?.title)}`
+          : "",
+      },
+      {
+        label: "最近出场",
+        value: row.lastChapter
+          ? `第 ${row.lastChapter.chapter_index + 1} 章 · ${chapterHeading(row.lastChapter, book.value?.title)}`
+          : "",
+      },
+      { label: "出场跨度", value: `${row.eventCount} 次事件 / ${row.chapterCount} 章 / 跨度 ${row.span} 章` },
+      { label: "主要活动地", value: row.topPlaces.map((p) => p.name).join("、") },
+      { label: "关系", value: row.relations.map((rel) => rel.name).join("、") },
+    ],
+    events,
+  };
+}
 </script>
 
 <template>
@@ -346,8 +404,23 @@ const rows = computed(() => {
 
               <td class="px-3 py-2.5">
                 <div class="flex items-center gap-2">
-                  <i class="fa-solid fa-user text-[11px] text-jade-400" />
-                  <span class="font-medium text-slate-100">{{ row.entity.name }}</span>
+                  <button class="flex min-w-0 items-center gap-2 text-left" @click.stop="openDetail(row)">
+                    <i class="fa-solid fa-user text-[11px] text-jade-400" />
+                    <span class="truncate font-medium text-slate-100 hover:text-jade-300">{{ row.entity.name }}</span>
+                  </button>
+                  <button
+                    class="text-slate-500 transition hover:text-jade-300"
+                    title="查看详情 / 传记"
+                    aria-label="查看详情"
+                    @click.stop="openDetail(row)"
+                  >
+                    <i class="fa-solid fa-circle-info text-[11px]" />
+                  </button>
+                  <i
+                    v-if="hasBiography(row)"
+                    class="fa-solid fa-feather-pointed text-[11px] text-gold-400"
+                    title="已有传记"
+                  />
                 </div>
                 <div v-if="row.role" class="mt-0.5 text-[11px] text-jade-400">{{ row.role }}</div>
               </td>
@@ -448,5 +521,12 @@ const rows = computed(() => {
         <p v-if="!rows.length" class="py-10 text-center text-sm text-slate-500">没有匹配的人物。</p>
       </div>
     </div>
+
+    <EntityDetailDialog
+      :open="!!detail"
+      :target="detail"
+      :book-id="book?.id ?? null"
+      @close="detail = null"
+    />
   </div>
 </template>

@@ -6,6 +6,7 @@ use once_cell::sync::Lazy;
 use regex::Regex;
 use serde::Deserialize;
 use serde_json::Value;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter};
@@ -167,6 +168,7 @@ pub async fn run_extraction(
             0,
         );
         match summarize_book(
+            &app,
             &req.llm,
             req.book_id,
             &book.title,
@@ -215,6 +217,7 @@ const BOOK_SUMMARY_SYSTEM: &str = r#"你是中文小说编辑。只输出一个 
 
 /// 用章节摘要生成全书总览。章节很多时先分批生成阶段摘要，再汇总最终总览。
 pub async fn summarize_book(
+    app: &AppHandle,
     config: &LlmConfig,
     book_id: i64,
     title: &str,
@@ -250,11 +253,39 @@ pub async fn summarize_book(
     // 控制单次上下文规模，兼容 8k 上下文的本地模型；过长时自动分批。
     let batches = pack_summary_lines(&lines, 5_000);
     let staged = batches.len() > 1;
-    let parts = if !staged {
-        batches
+    let total_steps = if staged { batches.len() + 1 } else { 1 };
+    emit_progress(
+        app,
+        &book_id,
+        "summarizing",
+        0,
+        total_steps,
+        0,
+        "",
+        if staged {
+            "正在生成阶段摘要…"
+        } else {
+            "正在生成全书总览…"
+        },
+        0,
+    );
+
+    let (parts, stage_summaries) = if !staged {
+        (batches, Vec::new())
     } else {
         let mut stage_summaries = Vec::with_capacity(batches.len());
         for (i, batch) in batches.iter().enumerate() {
+            emit_progress(
+                app,
+                &book_id,
+                "summarizing",
+                i,
+                total_steps,
+                0,
+                "",
+                &format!("正在生成阶段摘要 {}/{}…", i + 1, batches.len()),
+                0,
+            );
             let prompt = format!(
                 "《{}》第 {}/{} 组摘要。用 180-260 字概括本阶段剧情、人物与地点，不提前后续，不分点。只输出 JSON，summary 为完整正文。\n\n{}",
                 title,
@@ -263,8 +294,19 @@ pub async fn summarize_book(
                 batch
             );
             stage_summaries.push(call_summary(config, &prompt).await?);
+            emit_progress(
+                app,
+                &book_id,
+                "summarizing",
+                i + 1,
+                total_steps,
+                0,
+                "",
+                &format!("阶段摘要 {}/{} 完成", i + 1, batches.len()),
+                0,
+            );
         }
-        stage_summaries
+        (stage_summaries.clone(), stage_summaries)
     };
 
     let author_line = author
@@ -282,8 +324,271 @@ pub async fn summarize_book(
         "《{title}》{author_line}\n{scope}。写 300-500 字全书总览：核心设定/世界/主线、开端—发展—转折—结局、3-8 位关键人物；只依据材料，不编造，不分点。summary 只写正文，无标题、书名/作者或占位符。只输出 JSON，summary 只写正文。\n\n{}",
         material
     );
-    let summary = call_summary(config, &prompt).await?;
+    emit_progress(
+        app,
+        &book_id,
+        "summarizing",
+        total_steps.saturating_sub(1),
+        total_steps,
+        0,
+        "",
+        "正在汇总全书总览…",
+        0,
+    );
+    let final_summary = call_summary(config, &prompt).await?;
+    emit_progress(
+        app,
+        &book_id,
+        "summarizing",
+        total_steps,
+        total_steps,
+        0,
+        "",
+        "全书总览生成完成",
+        0,
+    );
+
+    // 保留所有阶段摘要（若有），与最终总览一起存储，前端可滚动展示全文。
+    let summary = if stage_summaries.is_empty() {
+        final_summary
+    } else {
+        let mut parts = vec![final_summary];
+        parts.extend(stage_summaries);
+        parts.join("\n\n")
+    };
     Ok(Some(summary))
+}
+
+const BIO_SYSTEM: &str = r#"你是中文小说资料编辑。只输出一个 JSON 对象，只含 biography 字段。根据资料写传记，2000 字以内；只写资料中的事实，不编造；简体中文；按时间顺序写成连贯段落，不要标题、分点、前言或占位符。"#;
+
+/// 按需生成人物 / 地点 / 物品传记。返回 (标题, 正文)。
+pub async fn generate_biography(
+    config: &LlmConfig,
+    book_id: i64,
+    kind: &str,
+    target_key: &str,
+    db: &crate::db::Db,
+) -> AppResult<(String, String)> {
+    let chapters = db.get_chapters(book_id)?;
+    let entities = db.get_entities(book_id)?;
+    let events = db.get_events(book_id)?;
+    let chapter_by_index: HashMap<i64, &ChapterRow> =
+        chapters.iter().map(|c| (c.chapter_index, c)).collect();
+    let kind = kind.trim().to_lowercase();
+
+    let (title, kind_label, lines) = if kind == "space" {
+        let matched: Vec<&ChapterRow> = chapters
+            .iter()
+            .filter(|c| space_key(c) == target_key)
+            .collect();
+        if matched.is_empty() {
+            return Err(AppError::Internal("没有找到该地点的章节资料".into()));
+        }
+        let first = matched[0];
+        let world = clean_world(first.world.as_deref());
+        let region = clean_place(first.region.as_deref().unwrap_or_default());
+        let raw_site = clean_place(first.site.as_deref().unwrap_or_default());
+        let site = if !raw_site.is_empty() {
+            raw_site
+        } else if !region.is_empty() {
+            region.clone()
+        } else {
+            world.clone()
+        };
+        let wanted: HashSet<i64> = matched.iter().map(|c| c.chapter_index).collect();
+        let mut char_names = Vec::new();
+        let mut item_names = Vec::new();
+        let mut event_lines = Vec::new();
+        for event in events.iter().filter(|e| wanted.contains(&e.chapter_index)) {
+            if let Some(entity) = entities.iter().find(|x| x.id == event.entity_id) {
+                if entity.entity_type == "CHARACTER" {
+                    char_names.push(entity.name.clone());
+                } else {
+                    item_names.push(entity.name.clone());
+                }
+            }
+            event_lines.push(format!(
+                "第 {} 章：{}｜{}｜{}｜{}",
+                event.chapter_index + 1,
+                event.action_type,
+                event.role.as_deref().unwrap_or(""),
+                event.impact_detail.as_deref().unwrap_or(""),
+                event.acquired_site.as_deref().unwrap_or("")
+            ));
+        }
+        char_names.sort();
+        char_names.dedup();
+        item_names.sort();
+        item_names.dedup();
+        let mut lines = vec![
+            format!("地点：{site}"),
+            format!("世界/区域：{} / {}", world, region),
+            format!(
+                "出现章节：{}",
+                matched
+                    .iter()
+                    .map(|c| (c.chapter_index + 1).to_string())
+                    .collect::<Vec<_>>()
+                    .join("、")
+            ),
+            format!("人物：{}", char_names.join("、")),
+            format!("物品/功法：{}", item_names.join("、")),
+        ];
+        for chapter in &matched {
+            lines.push(format!(
+                "第 {} 章《{}》 时间 {} / {} 天",
+                chapter.chapter_index + 1,
+                chapter.title,
+                chapter.temporal_type.as_deref().unwrap_or("UNKNOWN"),
+                chapter.time_offset_days.unwrap_or(0)
+            ));
+        }
+        lines.extend(event_lines);
+        (site, "地点", lines)
+    } else {
+        let entity = entities
+            .iter()
+            .find(|e| e.entity_type.eq_ignore_ascii_case(&kind) && e.name == target_key)
+            .ok_or_else(|| AppError::Internal("没有找到该实体的资料".into()))?;
+        let kind_label = match kind.as_str() {
+            "character" => "人物",
+            "item" => "物品",
+            "skill" => "功法",
+            "legacy" => "传承",
+            _ => "条目",
+        };
+        let entity_events: Vec<&EntityEventRow> = events
+            .iter()
+            .filter(|event| event.entity_id == entity.id)
+            .collect();
+        let first = entity.first_appeared_chapter_index;
+        let mut lines = vec![
+            format!("名称：{}", entity.name),
+            format!("类型：{}", kind_label),
+            format!("描述：{}", entity.description.as_deref().unwrap_or("")),
+            format!("重要度：{}", entity.importance.unwrap_or(1)),
+            format!(
+                "首次出现：{}",
+                first
+                    .map(|i| format!("第 {} 章", i + 1))
+                    .unwrap_or_default()
+            ),
+        ];
+        for event in &entity_events {
+            let chapter = chapter_by_index.get(&event.chapter_index);
+            let title = chapter.map(|c| c.title.as_str()).unwrap_or("");
+            let place = chapter.map(|c| space_key(c)).unwrap_or_default();
+            lines.push(format!(
+                "第 {} 章《{}》｜{}｜{}｜{}｜{}｜{}",
+                event.chapter_index + 1,
+                title,
+                place,
+                event.action_type,
+                event.role.as_deref().unwrap_or(""),
+                event.impact_detail.as_deref().unwrap_or(""),
+                event.acquired_site.as_deref().unwrap_or("")
+            ));
+        }
+        (entity.name.clone(), kind_label, lines)
+    };
+
+    if lines.is_empty() {
+        return Err(AppError::Internal("没有足够资料生成传记".into()));
+    }
+    let material = truncate(&lines.join("\n"), 7_000);
+    let prompt = format!(
+        "为{kind_label}《{title}》写一篇传记，2000 字以内。按时间顺序叙述其经历、变化与关系；只依据下面资料，不编造，不写标题或分点。只输出 JSON，biography 为完整正文。\n\n{material}"
+    );
+    let mut cfg = config.clone();
+    cfg.max_tokens = cfg.max_tokens.max(4_096);
+    let raw = llm::chat_json(&cfg, BIO_SYSTEM, &prompt, true).await?;
+    let mut biography = parse_biography_output(&raw).unwrap_or_default();
+    if !biography_usable(&biography) {
+        let retry_system = "直接输出中文传记正文，只写正文；不要 JSON、标题、解释、分点或占位符。";
+        let retry_prompt = format!("{prompt}\n\n忽略上面的 JSON 要求，直接输出完整传记正文。");
+        let retry_raw = llm::chat_json(&cfg, retry_system, &retry_prompt, false).await?;
+        biography = parse_biography_output(&retry_raw).unwrap_or_default();
+    }
+    if !biography_usable(&biography) {
+        return Err(AppError::Llm("传记内容为空或无效".into()));
+    }
+    Ok((title, biography.chars().take(2_000).collect()))
+}
+
+fn biography_usable(text: &str) -> bool {
+    text.trim().chars().filter(|c| !c.is_whitespace()).count() >= 20
+}
+
+fn parse_biography_output(raw: &str) -> Option<String> {
+    if let Some(block) = extract_json_block(raw) {
+        if let Ok(value) = serde_json::from_str::<Value>(&block) {
+            if let Some(text) = value.get("biography").and_then(Value::as_str) {
+                let text = text.trim();
+                if !text.is_empty() {
+                    return Some(text.to_string());
+                }
+            }
+        }
+    }
+    let text = raw.trim();
+    let text = text
+        .strip_prefix("```json")
+        .or_else(|| text.strip_prefix("```"))
+        .unwrap_or(text);
+    let text = text.strip_suffix("```").unwrap_or(text).trim();
+    (!text.is_empty()).then(|| text.to_string())
+}
+
+fn clean_world(value: Option<&str>) -> String {
+    let value = value.unwrap_or_default().trim();
+    if matches!(
+        value,
+        "现实世界"
+            | "现实"
+            | "真实世界"
+            | "现代世界"
+            | "未知世界"
+            | "未知空间"
+            | "未标注空间"
+            | "未标注"
+    ) {
+        String::new()
+    } else {
+        value.to_string()
+    }
+}
+
+fn clean_place(value: &str) -> String {
+    let value = value.trim();
+    if matches!(
+        value,
+        "现实世界"
+            | "现实"
+            | "真实世界"
+            | "现代世界"
+            | "未知世界"
+            | "未知空间"
+            | "未标注空间"
+            | "未标注"
+    ) {
+        String::new()
+    } else {
+        value.to_string()
+    }
+}
+
+fn space_key(chapter: &ChapterRow) -> String {
+    let world = clean_world(chapter.world.as_deref());
+    let region = clean_place(chapter.region.as_deref().unwrap_or_default());
+    let raw_site = clean_place(chapter.site.as_deref().unwrap_or_default());
+    let site = if !raw_site.is_empty() {
+        raw_site
+    } else if !region.is_empty() {
+        region.clone()
+    } else {
+        world.clone()
+    };
+    format!("{world}::{region}::{site}")
 }
 
 /// 按字符预算把章节摘要打包成若干组，保持章节顺序。

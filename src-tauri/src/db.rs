@@ -99,6 +99,18 @@ impl Db {
             );
             CREATE INDEX IF NOT EXISTS idx_events_entity ON entity_events(entity_id);
             CREATE INDEX IF NOT EXISTS idx_events_chapter ON entity_events(chapter_id);
+
+            CREATE TABLE IF NOT EXISTS biographies (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                book_id     INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+                kind        TEXT NOT NULL,
+                target_key  TEXT NOT NULL,
+                title       TEXT NOT NULL,
+                content     TEXT NOT NULL,
+                updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
+                UNIQUE(book_id, kind, target_key)
+            );
+            CREATE INDEX IF NOT EXISTS idx_biographies_book ON biographies(book_id);
             "#,
         )?;
 
@@ -541,6 +553,10 @@ impl Db {
         )?;
         tx.execute("DELETE FROM entities WHERE book_id = ?1", params![book_id])?;
         tx.execute(
+            "DELETE FROM biographies WHERE book_id = ?1",
+            params![book_id],
+        )?;
+        tx.execute(
             "UPDATE chapters SET raw_text_summary = NULL WHERE book_id = ?1",
             params![book_id],
         )?;
@@ -557,6 +573,7 @@ impl Db {
         let conn = self.conn.lock();
         conn.execute_batch(
             "DELETE FROM entity_events;
+             DELETE FROM biographies;
              DELETE FROM entities;
              DELETE FROM spatiotemporal_nodes;
              DELETE FROM chapters;
@@ -663,6 +680,70 @@ impl Db {
             })?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
+    }
+
+    pub fn list_biographies(&self, book_id: i64) -> AppResult<Vec<BiographyKey>> {
+        let conn = self.conn.lock();
+        let mut stmt =
+            conn.prepare("SELECT kind, target_key FROM biographies WHERE book_id = ?1")?;
+        let rows = stmt
+            .query_map(params![book_id], |r| {
+                Ok(BiographyKey {
+                    kind: r.get(0)?,
+                    target_key: r.get(1)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    pub fn get_biography(
+        &self,
+        book_id: i64,
+        kind: &str,
+        target_key: &str,
+    ) -> AppResult<Option<BiographyRow>> {
+        let conn = self.conn.lock();
+        let row = conn
+            .query_row(
+                "SELECT kind, target_key, title, content, updated_at
+                 FROM biographies WHERE book_id = ?1 AND kind = ?2 AND target_key = ?3",
+                params![book_id, kind, target_key],
+                |r| {
+                    Ok(BiographyRow {
+                        kind: r.get(0)?,
+                        target_key: r.get(1)?,
+                        title: r.get(2)?,
+                        content: r.get(3)?,
+                        updated_at: r.get(4)?,
+                    })
+                },
+            )
+            .optional()?;
+        Ok(row)
+    }
+
+    pub fn upsert_biography(
+        &self,
+        book_id: i64,
+        kind: &str,
+        target_key: &str,
+        title: &str,
+        content: &str,
+    ) -> AppResult<BiographyRow> {
+        let conn = self.conn.lock();
+        conn.execute(
+            "INSERT INTO biographies (book_id, kind, target_key, title, content, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, datetime('now'))
+             ON CONFLICT(book_id, kind, target_key) DO UPDATE SET
+                title = excluded.title,
+                content = excluded.content,
+                updated_at = datetime('now')",
+            params![book_id, kind, target_key, title, content],
+        )?;
+        drop(conn);
+        self.get_biography(book_id, kind, target_key)?
+            .ok_or_else(|| crate::error::AppError::Internal("传记写入失败".into()))
     }
 
     pub fn timeline_bundle(&self, book_id: i64) -> AppResult<TimelineBundle> {
@@ -812,6 +893,40 @@ mod tests {
         assert_eq!(chs.len(), 1);
         assert!(chs[0].raw_text_summary.is_none());
         assert!(db.get_book(book_id).unwrap().summary.is_none());
+    }
+
+    #[test]
+    fn biography_roundtrip_and_clear() {
+        let db = Db::open_in_memory().unwrap();
+        let book_id = db.insert_book("B", None, "EPUB", 1, None, None).unwrap();
+        db.insert_chapter(book_id, 0, "c0", "h", None).unwrap();
+
+        let first = db
+            .upsert_biography(book_id, "character", "韩立", "韩立", "第一版传记")
+            .unwrap();
+        assert_eq!(first.content, "第一版传记");
+        assert!(db
+            .get_biography(book_id, "character", "韩立")
+            .unwrap()
+            .is_some());
+        assert_eq!(db.list_biographies(book_id).unwrap().len(), 1);
+
+        db.upsert_biography(book_id, "character", "韩立", "韩立", "第二版传记")
+            .unwrap();
+        assert_eq!(
+            db.get_biography(book_id, "character", "韩立")
+                .unwrap()
+                .unwrap()
+                .content,
+            "第二版传记"
+        );
+
+        db.clear_book_extraction(book_id).unwrap();
+        assert!(db
+            .get_biography(book_id, "character", "韩立")
+            .unwrap()
+            .is_none());
+        assert!(db.list_biographies(book_id).unwrap().is_empty());
     }
 
     #[test]
