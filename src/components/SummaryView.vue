@@ -289,10 +289,23 @@ async function generateSummary() {
       </header>
 
       <!-- 全书总览：有内容时只展示正文 -->
-      <section class="panel p-5">
-        <p v-if="bookSummary" class="whitespace-pre-line text-sm leading-relaxed text-slate-300">
-          {{ bookSummary }}
-        </p>
+      <section class="panel group relative p-5">
+        <template v-if="bookSummary">
+          <p class="whitespace-pre-line text-sm leading-relaxed text-slate-300">
+            {{ bookSummary }}
+          </p>
+          <button
+            v-if="allExtracted"
+            class="btn-ghost absolute right-3 top-3 !p-1.5 transition-opacity focus-visible:opacity-100"
+            :class="generating ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'"
+            :disabled="generating"
+            title="重新生成全书总览"
+            aria-label="重新生成全书总览"
+            @click="generateSummary"
+          >
+            <i class="fa-solid fa-rotate text-xs" :class="{ 'fa-spin': generating }" />
+          </button>
+        </template>
 
         <template v-else>
           <div class="flex flex-wrap items-center gap-2">

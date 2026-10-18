@@ -3,6 +3,11 @@
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/) 与 [Conventional Commits](https://www.conventionalcommits.org/zh-hans/)。
 每个有意义的功能实现或修复均递增 PATCH 版本。
 
+## [0.1.32] - style(summary)
+
+- 已有全书总览时，重新生成按钮改为悬停/键盘聚焦才显示的角落图标，默认视图只保留摘要正文。
+- 生成过程中图标保持可见并旋转，保留操作反馈。
+
 ## [0.1.31] - fix(summary)
 
 - 全书总览提示词明确要求 `summary` 只放正文：不写标题、“全书总览”字样、书名/作者、前言、分点、章节列表或字数说明。
