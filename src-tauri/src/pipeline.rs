@@ -741,7 +741,7 @@ fn normalize_value(value: &mut Value) {
                 .unwrap_or(false)
         });
         for c in chars.iter_mut() {
-            normalize_importance(c);
+            normalize_character(c);
         }
     }
     if let Some(Value::Array(items)) = obj.get_mut("items_and_skills") {
@@ -752,12 +752,22 @@ fn normalize_value(value: &mut Value) {
                 .unwrap_or(false)
         });
         for it in items.iter_mut() {
-            normalize_importance(it);
+            normalize_item(it);
         }
     }
-    if let Some(spatial) = obj.get_mut("spatial") {
-        normalize_importance(spatial);
+    if let Some(temporal) = obj.get_mut("temporal") {
+        normalize_temporal(temporal);
     }
+    if let Some(spatial) = obj.get_mut("spatial") {
+        normalize_spatial(spatial);
+    }
+    normalize_enum_field(
+        obj,
+        "narrative_perspective",
+        &["first_person", "third_person"],
+        "third_person",
+        false,
+    );
 }
 
 /// importance 容忍字符串/浮点，并夹紧到 1–5，避免小模型格式偏差导致整段解析失败。
@@ -778,6 +788,147 @@ fn normalize_importance(value: &mut Value) {
     }
 }
 
+fn normalize_character(value: &mut Value) {
+    {
+        let Some(obj) = value.as_object_mut() else {
+            return;
+        };
+        normalize_enum_field(
+            obj,
+            "action",
+            &["FIRST_APPEARANCE", "ACTIVE", "DEPARTURE", "DEATH"],
+            "ACTIVE",
+            true,
+        );
+        normalize_opt_string(obj, "role");
+        normalize_opt_string(obj, "description");
+    }
+    normalize_importance(value);
+}
+
+fn normalize_item(value: &mut Value) {
+    {
+        let Some(obj) = value.as_object_mut() else {
+            return;
+        };
+        normalize_enum_field(obj, "category", &["ITEM", "SKILL", "LEGACY"], "ITEM", true);
+        normalize_opt_string(obj, "usage_in_chapter");
+        normalize_bool(obj, "future_hook_flag");
+        if let Some(acquired) = obj.get_mut("acquired_from") {
+            if let Some(acquired) = acquired.as_object_mut() {
+                normalize_opt_string(acquired, "spatial");
+                normalize_opt_string(acquired, "temporal");
+            } else {
+                *acquired = Value::Null;
+            }
+        }
+    }
+    normalize_importance(value);
+}
+
+fn normalize_temporal(value: &mut Value) {
+    let Some(obj) = value.as_object_mut() else {
+        return;
+    };
+    normalize_enum_field(
+        obj,
+        "type",
+        &["CONTINUOUS", "JUMP_FORWARD", "FLASHBACK", "UNCERTAIN"],
+        "UNCERTAIN",
+        true,
+    );
+    normalize_opt_string(obj, "raw_marker");
+    normalize_opt_string(obj, "reference_anchor");
+    if let Some(slot) = obj.get_mut("relative_delta_days") {
+        let parsed = match slot {
+            Value::Number(n) => n.as_i64(),
+            Value::String(s) => s.trim().parse::<i64>().ok(),
+            _ => None,
+        };
+        *slot = parsed.map(Value::from).unwrap_or(Value::Null);
+    }
+}
+
+fn normalize_spatial(value: &mut Value) {
+    {
+        let Some(obj) = value.as_object_mut() else {
+            return;
+        };
+        normalize_opt_string(obj, "world");
+        normalize_opt_string(obj, "region");
+        normalize_opt_string(obj, "site");
+        normalize_opt_string(obj, "source_site");
+        normalize_enum_field(
+            obj,
+            "movement_type",
+            &[
+                "STAY",
+                "LOCAL_MOVE",
+                "TELEPORT",
+                "ASCENSION",
+                "DUNGEON_ENTER",
+                "DUNGEON_EXIT",
+            ],
+            "STAY",
+            true,
+        );
+    }
+    normalize_importance(value);
+}
+
+fn normalize_enum_field(
+    obj: &mut serde_json::Map<String, Value>,
+    key: &str,
+    allowed: &[&str],
+    default: &str,
+    uppercase: bool,
+) {
+    let normalized = obj
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .and_then(|value| {
+            let candidate = if uppercase {
+                value.to_uppercase()
+            } else {
+                value.to_lowercase()
+            };
+            allowed
+                .iter()
+                .find(|allowed| **allowed == candidate)
+                .map(|allowed| (*allowed).to_string())
+        })
+        .unwrap_or_else(|| default.to_string());
+    obj.insert(key.to_string(), Value::String(normalized));
+}
+
+fn normalize_opt_string(obj: &mut serde_json::Map<String, Value>, key: &str) {
+    let Some(slot) = obj.get_mut(key) else {
+        return;
+    };
+    let replacement = match &*slot {
+        Value::Null => Value::Null,
+        Value::String(text) => Value::String(text.clone()),
+        Value::Number(number) => Value::String(number.to_string()),
+        Value::Bool(flag) => Value::String(flag.to_string()),
+        _ => Value::String(String::new()),
+    };
+    *slot = replacement;
+}
+
+fn normalize_bool(obj: &mut serde_json::Map<String, Value>, key: &str) {
+    let value = match obj.get(key) {
+        Some(Value::Bool(flag)) => *flag,
+        Some(Value::String(text)) => matches!(
+            text.trim().to_ascii_lowercase().as_str(),
+            "true" | "1" | "yes"
+        ),
+        Some(Value::Number(number)) => number.as_i64().unwrap_or(0) != 0,
+        _ => false,
+    };
+    obj.insert(key.to_string(), Value::Bool(value));
+}
+
 /// 当严格反序列化失败时的兜底策略：尽可能保留可识别字段。
 fn lenient_extraction(value: &Value) -> SegmentExtraction {
     let get_str = |k: &str| value.get(k).and_then(Value::as_str).map(|s| s.to_string());
@@ -796,8 +947,26 @@ fn lenient_extraction(value: &Value) -> SegmentExtraction {
         narrative_perspective: get_str("narrative_perspective"),
         temporal,
         spatial,
-        characters: vec![],
-        items_and_skills: vec![],
+        characters: value
+            .get("characters")
+            .and_then(Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| serde_json::from_value::<CharacterEntry>(item.clone()).ok())
+                    .collect()
+            })
+            .unwrap_or_default(),
+        items_and_skills: value
+            .get("items_and_skills")
+            .and_then(Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| serde_json::from_value::<ItemSkillEntry>(item.clone()).ok())
+                    .collect()
+            })
+            .unwrap_or_default(),
         plot_summary: get_str("plot_summary").unwrap_or_default(),
     }
 }
@@ -859,7 +1028,7 @@ fn build_user_prompt(
     text: &str,
 ) -> String {
     format!(
-        "【章节序号】{}\n【章节标题】{}\n【分块】{}/{}\n\n【正文】\n{}\n\n【输出要求】\n1. 只分析上面的【正文】，元数据只用于填写 chapter_index 和 chapter_title。\n2. 只输出一个 JSON 对象，不要 Markdown、解释或前后缀文字。\n3. 必须包含全部顶层字段：chapter_index、chapter_title、narrative_perspective、temporal、spatial、characters、items_and_skills、plot_summary。\n4. 严格按系统提示的字段规则和枚举值填写；characters / items_and_skills 没有内容时才用 []。",
+        "【章节序号】{}\n【章节标题】{}\n【分块】{}/{}\n\n【正文】\n{}\n\n【输出要求】\n1. 只分析上面的【正文】，元数据只用于填写 chapter_index 和 chapter_title。\n2. 只输出一个 JSON 对象，不要 Markdown、解释或前后缀文字。\n3. 必须包含全部顶层字段：chapter_index、chapter_title、narrative_perspective、temporal、spatial、characters、items_and_skills、plot_summary。\n4. 严格按系统提示的字段规则和枚举值填写；characters / items_and_skills 没有内容时才用 []。\n5. characters 不要只列主要人物：对话说话人、被称呼者、只被提及者都要检查；全名与简称合并为一条。\n6. 只要正文出现明确场所，spatial.site 就不能为空。",
         chapter.chapter_index,
         chapter.title,
         chunk_index + 1,
@@ -947,7 +1116,7 @@ pub const SYSTEM_PROMPT: &str = r#"你是中文小说叙事结构抽取器。任
 - spatial.world / region：只填原文明确的上级世界/区域，不确定可留空，但不要因此把 site 留空。只有整段完全没有任何地点/场所信息时，site/region/world 才可全空。不要补“现实世界/某城市”等泛化标签，也不要用人物/物品名代替地点名。
 - movement_type 只能是 STAY、LOCAL_MOVE、TELEPORT、ASCENSION、DUNGEON_ENTER、DUNGEON_EXIT 之一；没移动写 STAY；仅在明确移动时填 source_site。
 - spatial.importance：1–5 的整数，5=全书核心舞台，4=主要地点，3=重要地点，2=次要地点，1=过场地点；不确定写 3。
-- characters：列出本段所有具名人物，包括只被提及但未出场者；不要列作者、译者、序言作者等现实身份，不要列“众人/士兵/弟子”等群体或“他/她”等代词。同名、绰号、尊称、简称合并为一个规范名，只输出一次；name 必须能在正文中找到（第一人称主角找不到名字时写 "PROTAGONIST_FIRST_PERSON"）。
+- characters：列出本段所有具名人物，包括主角、配角、反派、对话的说话人与被称呼者，以及只被提及但未出场者；不要只列剧情摘要中的主要人物。不要列作者、译者、序言作者等现实身份，不要列“众人/士兵/弟子”等群体或“他/她”等代词。同名、绰号、尊称、简称合并为一个规范名，只输出一次；同时出现全名与简称时用全名，简称不要另起条目。name 必须能在正文中找到（第一人称主角找不到名字时写 "PROTAGONIST_FIRST_PERSON"）。
 - character.action 只能是 FIRST_APPEARANCE（本段首次出现）、ACTIVE（本段正常出场）、DEPARTURE（明确离开）、DEATH（明确死亡）之一。
 - character.role 写具体身份/关系，如“主角”“主角的师父”“反派首领”，不要写“人物/角色/未知”；description 写外貌或身份，没有写 ""。role、description 各不超过 24 字。
 - character.importance：1–5 的整数，5=全书核心主角，4=主要人物，3=重要配角，2=次要人物，1=路人/一次性角色；只被提及一两次的填 1–2。
@@ -978,15 +1147,18 @@ items_and_skills 的元素：
 - 第一个字符是 {，最后一个字符是 }；没有 Markdown、解释或多余文字。
 - 8 个顶层字段齐全；字符串用双引号；没有尾随逗号；括号和引号闭合。
 - chapter_index / chapter_title 与输入一致；characters / items_and_skills 中的 name 都能在正文找到。
+- characters 是否覆盖所有具名人物、对话说话人与被称呼者？同一人物的全名与简称是否已合并？
+- 只要正文出现场所，spatial.site 是否已填写？
 - 只输出这个 JSON 对象。
 "#;
 
 /// 过滤掉未在本段正文中出现的实体，抑制模型幻觉（例如照搬示例或其它作品的人名）。
 /// 返回被过滤的条目数量。单字名称跳过校验以避免误删。
 fn ground_entries(ext: &mut SegmentExtraction, text: &str) -> usize {
+    let normalized_text = normalize_ground(text);
     let mut dropped = 0;
     ext.characters.retain(|c| {
-        if c.name == "PROTAGONIST_FIRST_PERSON" || is_grounded(&c.name, text) {
+        if c.name == "PROTAGONIST_FIRST_PERSON" || is_grounded(&c.name, text, &normalized_text) {
             true
         } else {
             dropped += 1;
@@ -994,7 +1166,7 @@ fn ground_entries(ext: &mut SegmentExtraction, text: &str) -> usize {
         }
     });
     ext.items_and_skills.retain(|i| {
-        if is_grounded(&i.name, text) {
+        if is_grounded(&i.name, text, &normalized_text) {
             true
         } else {
             dropped += 1;
@@ -1004,12 +1176,33 @@ fn ground_entries(ext: &mut SegmentExtraction, text: &str) -> usize {
     dropped
 }
 
-fn is_grounded(name: &str, text: &str) -> bool {
+/// 人名/地名匹配时忽略空格与常见分隔符，避免「久木 祥一郎」被误判为未出现。
+fn normalize_ground(text: &str) -> String {
+    text.chars()
+        .filter(|c| {
+            !c.is_whitespace()
+                && !matches!(
+                    c,
+                    '·' | '•' | '・' | '，' | ',' | '.' | '。' | '、' | '-' | '_' | '—'
+                )
+        })
+        .flat_map(|c| c.to_lowercase())
+        .collect()
+}
+
+fn is_grounded(name: &str, text: &str, normalized_text: &str) -> bool {
     let n = name.trim();
     if n.chars().count() < 2 {
         return true;
     }
-    text.contains(n)
+    if text.contains(n) {
+        return true;
+    }
+    let normalized_name = normalize_ground(n);
+    if normalized_name.chars().count() < 2 {
+        return true;
+    }
+    normalized_text.contains(&normalized_name)
 }
 
 #[cfg(test)]
@@ -1181,6 +1374,45 @@ mod tests {
             .any(|c| c.name == "PROTAGONIST_FIRST_PERSON"));
         assert_eq!(ext.items_and_skills.len(), 1);
         assert_eq!(ext.items_and_skills[0].name, "掌天瓶");
+    }
+
+    #[test]
+    fn lenient_normalization_keeps_people_and_items() {
+        let payload = json!({
+            "narrative_perspective": "第三人称",
+            "characters": [
+                {"name": "韩立", "action": "主角", "role": 123, "importance": "5"},
+                {"name": "厉飞雨", "action": null, "description": null}
+            ],
+            "items_and_skills": [
+                {"name": "掌天瓶", "category": "法宝", "future_hook_flag": "yes"}
+            ]
+        })
+        .to_string();
+        let (ext, _) = parse_extraction(&payload).unwrap();
+        assert_eq!(ext.characters.len(), 2, "非法枚举不应丢掉整条人物");
+        assert_eq!(ext.characters[0].action, "ACTIVE");
+        assert_eq!(ext.characters[0].role.as_deref(), Some("123"));
+        assert_eq!(ext.characters[1].action, "ACTIVE");
+        assert_eq!(ext.items_and_skills.len(), 1);
+        assert_eq!(ext.items_and_skills[0].category, "ITEM");
+        assert!(ext.items_and_skills[0].future_hook_flag);
+        assert_eq!(ext.narrative_perspective.as_deref(), Some("third_person"));
+    }
+
+    #[test]
+    fn ground_entries_accepts_names_with_spaces_or_separators() {
+        let mut ext: SegmentExtraction = serde_json::from_value(json!({
+            "characters": [
+                {"name": "久木 祥一郎", "action": "ACTIVE"},
+                {"name": "松原·凛子", "action": "ACTIVE"}
+            ],
+            "items_and_skills": []
+        }))
+        .unwrap();
+        let dropped = ground_entries(&mut ext, "久木祥一郎与松原凛子在轻井泽相遇。");
+        assert_eq!(dropped, 0);
+        assert_eq!(ext.characters.len(), 2);
     }
 
     #[test]

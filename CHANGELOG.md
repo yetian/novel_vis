@@ -3,6 +3,13 @@
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/) 与 [Conventional Commits](https://www.conventionalcommits.org/zh-hans/)。
 每个有意义的功能实现或修复均递增 PATCH 版本。
 
+## [0.1.39] - fix(extraction)
+
+- 修复“部分人物缺失”：非法枚举或字段类型不再导致整段 `characters` / `items_and_skills` 被丢弃，逐条规范化后保留可识别条目。
+- 实体校验忽略空格、间隔号与常见分隔符，避免「久木 祥一郎」等带空格的人名被误删。
+- 抽取提示词强化人物覆盖：对话说话人、被称呼者、只被提及者与全名/简称合并都加入检查清单。
+- 增加归一化与实体匹配测试。
+
 ## [0.1.38] - feat(export)
 
 - 修复导出无写文件权限：新增 Rust 侧 `write_text_file` 命令，HTML / JSON / CSV 导出不再受前端 fs 插件路径权限限制。
