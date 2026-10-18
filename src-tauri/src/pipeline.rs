@@ -520,6 +520,9 @@ async fn extract_chunk(
     book_id: i64,
 ) -> AppResult<(SegmentExtraction, u32, bool)> {
     let user_prompt = build_user_prompt(chapter, chunk_index, chunk_total, text);
+    // 章节 JSON 可能包含大量人物/物品；给输出留足预算，避免中途截断。
+    let mut cfg = llm_config.clone();
+    cfg.max_tokens = cfg.max_tokens.max(4096);
     let mut last_error = String::new();
     let mut last_output = String::new();
     let mut retries = 0u32;
@@ -545,7 +548,7 @@ async fn extract_chunk(
             build_repair_prompt(&user_prompt, &last_output, &last_error)
         };
 
-        let response = match llm::chat_json(llm_config, SYSTEM_PROMPT, &prompt, true).await {
+        let response = match llm::chat_json(&cfg, SYSTEM_PROMPT, &prompt, true).await {
             Ok(content) => content,
             Err(e) => {
                 last_error = e.to_string();
@@ -1028,7 +1031,7 @@ fn build_user_prompt(
     text: &str,
 ) -> String {
     format!(
-        "【章节序号】{}\n【章节标题】{}\n【分块】{}/{}\n\n【正文】\n{}\n\n【输出要求】\n1. 只分析上面的【正文】，元数据只用于填写 chapter_index 和 chapter_title。\n2. 只输出一个 JSON 对象，不要 Markdown、解释或前后缀文字。\n3. 必须包含全部顶层字段：chapter_index、chapter_title、narrative_perspective、temporal、spatial、characters、items_and_skills、plot_summary。\n4. 严格按系统提示的字段规则和枚举值填写；characters / items_and_skills 没有内容时才用 []。\n5. characters 不要只列主要人物：对话说话人、被称呼者、只被提及者都要检查；全名与简称合并为一条。\n6. 只要正文出现明确场所，spatial.site 就不能为空。",
+        "【章节序号】{}\n【章节标题】{}\n【分块】{}/{}\n\n【正文】\n{}\n\n【输出要求】\n1. 只分析上面的【正文】，元数据只用于填写 chapter_index 和 chapter_title。\n2. 只输出一个 JSON 对象，不要 Markdown、解释或前后缀文字。\n3. 必须包含全部顶层字段：chapter_index、chapter_title、narrative_perspective、temporal、spatial、characters、items_and_skills、plot_summary。\n4. 严格按系统提示的字段规则和枚举值填写；characters / items_and_skills 没有内容时才用 []。\n5. characters 不要只列主要人物：对话说话人、被称呼者、只被提及者都要检查；全名与简称合并为一条。\n6. 只要正文出现明确场所，spatial.site 就不能为空。\n7. 输出紧凑 JSON（不要缩进美化）；人物/物品很多时压缩 role、description、usage_in_chapter，但必须保留条目、闭合所有括号并完整输出。",
         chapter.chapter_index,
         chapter.title,
         chunk_index + 1,
@@ -1039,7 +1042,7 @@ fn build_user_prompt(
 
 fn build_repair_prompt(original: &str, bad_output: &str, error: &str) -> String {
     format!(
-        "上一次输出无法解析为合法 JSON。请修复它。\n\n【解析错误】{}\n\n【上一次输出】\n{}\n\n【原始任务】\n{}\n\n【修复要求】\n1. 只修复 JSON 语法和结构，不要改写剧情内容，保留原有字段和值。\n2. 去掉 Markdown 代码块、解释、前言和后语。\n3. 字符串必须用双引号；换行/制表符转义为 \\n / \\t；不要尾随逗号。\n4. 若输出被截断，补全引号和括号，重新输出一个完整对象。\n5. 顶层字段必须齐全：chapter_index、chapter_title、narrative_perspective、temporal、spatial、characters、items_and_skills、plot_summary。\n6. 只输出 JSON，从 {{ 开始、到 }} 结束。",
+        "上一次输出无法解析为合法 JSON。请修复它。\n\n【解析错误】{}\n\n【上一次输出】\n{}\n\n【原始任务】\n{}\n\n【修复要求】\n1. 只修复 JSON 语法和结构，不要改写剧情内容，保留原有字段和值。\n2. 去掉 Markdown 代码块、解释、前言和后语。\n3. 字符串必须用双引号；换行/制表符转义为 \\n / \\t；不要尾随逗号。\n4. 若输出被截断，补全引号和括号，重新输出一个完整对象。\n5. 顶层字段必须齐全：chapter_index、chapter_title、narrative_perspective、temporal、spatial、characters、items_and_skills、plot_summary。\n6. 输入内容很多时压缩 role、description、usage_in_chapter，但不要删除人物/物品条目。\n7. 如果上次输出因长度限制被截断，请重写一个更紧凑的完整 JSON，不要只续写半截对象。\n8. 只输出 JSON，从 {{ 开始、到 }} 结束。",
         error,
         truncate(bad_output, 4000),
         truncate(original, 4000)
@@ -1118,10 +1121,11 @@ pub const SYSTEM_PROMPT: &str = r#"你是中文小说叙事结构抽取器。任
 - spatial.importance：1–5 的整数，5=全书核心舞台，4=主要地点，3=重要地点，2=次要地点，1=过场地点；不确定写 3。
 - characters：列出本段所有具名人物，包括主角、配角、反派、对话的说话人与被称呼者，以及只被提及但未出场者；不要只列剧情摘要中的主要人物。不要列作者、译者、序言作者等现实身份，不要列“众人/士兵/弟子”等群体或“他/她”等代词。同名、绰号、尊称、简称合并为一个规范名，只输出一次；同时出现全名与简称时用全名，简称不要另起条目。name 必须能在正文中找到（第一人称主角找不到名字时写 "PROTAGONIST_FIRST_PERSON"）。
 - character.action 只能是 FIRST_APPEARANCE（本段首次出现）、ACTIVE（本段正常出场）、DEPARTURE（明确离开）、DEATH（明确死亡）之一。
-- character.role 写具体身份/关系，如“主角”“主角的师父”“反派首领”，不要写“人物/角色/未知”；description 写外貌或身份，没有写 ""。role、description 各不超过 24 字。
+- character.role 写具体身份/关系，如“主角”“主角的师父”“反派首领”，不要写“人物/角色/未知”；description 写外貌或身份，没有写 ""。role 不超过 12 字，description 不超过 20 字。
 - character.importance：1–5 的整数，5=全书核心主角，4=主要人物，3=重要配角，2=次要人物，1=路人/一次性角色；只被提及一两次的填 1–2。
-- items_and_skills：只列本段实际出现或明确被提及的物品/功法/传承；name 用原文写法；category 只能是 ITEM、SKILL、LEGACY 之一。importance 1–5（5=贯穿全书的核心，4=关键，3=重要，2=次要，1=过场）。acquired_from.spatial / temporal 只在原文明确给出时填写，否则写 ""；usage_in_chapter 写本段用途，没有写 ""，不超过 24 字；future_hook_flag 只在原文明确暗示后续用途时写 true，否则 false。
-- plot_summary：≤50 字，一句话，包含本段最关键的人物/地点/事件；不要写成人物清单。
+- items_and_skills：只列本段实际出现或明确被提及的物品/功法/传承；name 用原文写法；category 只能是 ITEM、SKILL、LEGACY 之一。importance 1–5（5=贯穿全书的核心，4=关键，3=重要，2=次要，1=过场）。acquired_from.spatial / temporal 只在原文明确给出时填写，否则写 ""；usage_in_chapter 写本段用途，没有写 ""，不超过 16 字；future_hook_flag 只在原文明确暗示后续用途时写 true，否则 false。
+- plot_summary：≤40 字，一句话，包含本段最关键的人物/地点/事件；不要写成人物清单。
+- JSON 使用紧凑格式：对象和数组不要换行缩进，不要重复条目。内容很多时压缩描述文字，但必须保留条目并保证 JSON 完整闭合；绝不能中途截断。
 - 所有自然语言字段用简体中文；专有名词保留原文写法；仅 JSON 键名与枚举值用英文。
 - 严禁编造：只写【正文】中确凿出现的内容；不要套用示例、其它作品或常识。characters / items_and_skills 没有内容时才用 []。
 
@@ -1149,7 +1153,7 @@ items_and_skills 的元素：
 - chapter_index / chapter_title 与输入一致；characters / items_and_skills 中的 name 都能在正文找到。
 - characters 是否覆盖所有具名人物、对话说话人与被称呼者？同一人物的全名与简称是否已合并？
 - 只要正文出现场所，spatial.site 是否已填写？
-- 只输出这个 JSON 对象。
+- 输出是否完整闭合、没有在中途截断？只输出这个 JSON 对象。
 "#;
 
 /// 过滤掉未在本段正文中出现的实体，抑制模型幻觉（例如照搬示例或其它作品的人名）。
@@ -1494,7 +1498,9 @@ mod tests {
             assert!(SYSTEM_PROMPT.contains(key), "system prompt missing {key}");
         }
         assert!(prompt.contains("只输出一个 JSON 对象"));
+        assert!(prompt.contains("完整输出"));
         assert!(SYSTEM_PROMPT.contains("输出前检查"));
+        assert!(SYSTEM_PROMPT.contains("完整闭合"));
     }
 
     #[test]

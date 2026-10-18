@@ -3,6 +3,13 @@
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/) 与 [Conventional Commits](https://www.conventionalcommits.org/zh-hans/)。
 每个有意义的功能实现或修复均递增 PATCH 版本。
 
+## [0.1.40] - fix(prompt)
+
+- 抽取提示词要求紧凑 JSON、缩短 role/description/usage/plot_summary，内容多时压缩描述而不是截断结构。
+- 输出前检查增加“必须完整闭合、不得中途停止”；修复提示明确要求被长度截断时重写完整紧凑 JSON，而不是只续写半截对象。
+- 抽取请求的 `max_tokens` 至少为 4096，给人物/物品较多的长 JSON 留出足够输出预算。
+- 降低长输出导致的 JSON 截断风险，同时保留人物/物品条目完整性。
+
 ## [0.1.39] - fix(extraction)
 
 - 修复“部分人物缺失”：非法枚举或字段类型不再导致整段 `characters` / `items_and_skills` 被丢弃，逐条规范化后保留可识别条目。
