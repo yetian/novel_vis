@@ -3,6 +3,11 @@
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/) 与 [Conventional Commits](https://www.conventionalcommits.org/zh-hans/)。
 每个有意义的功能实现或修复均递增 PATCH 版本。
 
+## [0.1.45] - style(tables)
+
+- 人物表、空间表、物品表改为 `table-fixed` 百分比列宽，移除固定最小宽度，表格始终适配窗口，不再需要横向滚动。
+- 收窄单元格内边距与重要度条，长描述自动换行，姓名/标题保持截断。
+
 ## [0.1.44] - fix(summary)
 
 - 阶段摘要硬限制 240 字、最终总览 450 字，提示词明确“超出会截断”，减少模型写超长导致 JSON/摘要被截断。

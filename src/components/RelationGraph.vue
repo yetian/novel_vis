@@ -381,17 +381,17 @@ function openDetail(row: PersonRow) {
       </header>
 
       <div class="min-h-0 flex-1 overflow-auto" @wheel="altWheelToHorizontal">
-        <table class="w-full min-w-[1180px] border-collapse text-left text-sm">
+        <table class="w-full table-fixed border-collapse text-left text-sm">
           <thead class="sticky top-0 z-10 bg-ink-800/95 text-[11px] uppercase tracking-wide text-slate-500 backdrop-blur">
             <tr>
-              <th class="w-12 px-3 py-2 font-medium">#</th>
-              <th class="min-w-[130px] px-3 py-2 font-medium">人物</th>
-              <th class="w-28 px-3 py-2 font-medium">重要度</th>
-              <th class="min-w-[180px] px-3 py-2 font-medium">简介</th>
-              <th class="min-w-[180px] px-3 py-2 font-medium">出场跨度</th>
-              <th class="min-w-[190px] px-3 py-2 font-medium">首现时空</th>
-              <th class="min-w-[150px] px-3 py-2 font-medium">主要活动地</th>
-              <th class="min-w-[260px] px-3 py-2 font-medium">关系</th>
+              <th class="w-[4%] px-2 py-2 font-medium">#</th>
+              <th class="w-[12%] px-2 py-2 font-medium">人物</th>
+              <th class="w-[9%] px-2 py-2 font-medium">重要度</th>
+              <th class="w-[18%] px-2 py-2 font-medium">简介</th>
+              <th class="w-[14%] px-2 py-2 font-medium">出场跨度</th>
+              <th class="w-[14%] px-2 py-2 font-medium">首现时空</th>
+              <th class="w-[12%] px-2 py-2 font-medium">主要活动地</th>
+              <th class="w-[17%] px-2 py-2 font-medium">关系</th>
             </tr>
           </thead>
           <tbody>
@@ -400,9 +400,9 @@ function openDetail(row: PersonRow) {
               :key="row.entity.id"
               class="border-t border-ink-700/50 align-top transition hover:bg-ink-700/20"
             >
-              <td class="px-3 py-2.5 text-xs text-slate-600">{{ i + 1 }}</td>
+              <td class="px-2 py-2.5 text-xs text-slate-600">{{ i + 1 }}</td>
 
-              <td class="px-3 py-2.5">
+              <td class="px-2 py-2.5">
                 <div class="flex items-center gap-2">
                   <button class="flex min-w-0 items-center gap-2 text-left" @click.stop="openDetail(row)">
                     <i class="fa-solid fa-user text-[11px] text-jade-400" />
@@ -425,7 +425,7 @@ function openDetail(row: PersonRow) {
                 <div v-if="row.role" class="mt-0.5 text-[11px] text-jade-400">{{ row.role }}</div>
               </td>
 
-              <td class="px-3 py-2.5">
+              <td class="px-2 py-2.5">
                 <div
                   class="flex items-center gap-0.5"
                   :title="`重要度 ${row.importance}/5${row.explicit != null ? ` · 模型判断 ${row.explicit}/5` : ''} · 出场 ${row.eventCount} 次 / ${row.chapterCount} 章`"
@@ -433,18 +433,18 @@ function openDetail(row: PersonRow) {
                   <span
                     v-for="n in 5"
                     :key="n"
-                    class="h-1.5 w-3 rounded-sm"
+                    class="h-1.5 w-2 rounded-sm"
                     :class="n <= row.importance ? 'bg-gold-400' : 'bg-ink-600'"
                   />
                 </div>
                 <div class="mt-1 text-[10px] text-slate-500">{{ importanceLabel(row.importance) }}</div>
               </td>
 
-              <td class="px-3 py-2.5 text-xs leading-relaxed text-slate-400">
+              <td class="break-words px-2 py-2.5 text-xs leading-relaxed text-slate-400">
                 {{ row.entity.description || "—" }}
               </td>
 
-              <td class="px-3 py-2.5 text-xs">
+              <td class="px-2 py-2.5 text-xs">
                 <template v-if="row.firstChapter">
                   <div class="text-slate-300">首次 · 第 {{ row.firstChapter.chapter_index + 1 }} 章</div>
                   <div
@@ -465,7 +465,7 @@ function openDetail(row: PersonRow) {
                 </div>
               </td>
 
-              <td class="px-3 py-2.5 text-xs">
+              <td class="px-2 py-2.5 text-xs">
                 <template v-if="row.firstChapter">
                   <div class="text-gold-400">
                     <i class="fa-solid fa-location-dot mr-1" />{{ row.firstPlace || "未标注空间" }}
@@ -479,7 +479,7 @@ function openDetail(row: PersonRow) {
                 <span v-else class="text-slate-600">—</span>
               </td>
 
-              <td class="px-3 py-2.5">
+              <td class="px-2 py-2.5">
                 <div v-if="row.topPlaces.length" class="flex flex-wrap gap-1">
                   <span
                     v-for="place in row.topPlaces"
@@ -494,7 +494,7 @@ function openDetail(row: PersonRow) {
                 <span v-else class="text-xs text-slate-600">—</span>
               </td>
 
-              <td class="px-3 py-2.5">
+              <td class="px-2 py-2.5">
                 <div v-if="row.relations.length">
                   <div class="mb-1 text-[10px] text-slate-600">共 {{ row.relations.length }} 段关系</div>
                   <div class="flex flex-wrap gap-1">
