@@ -2,6 +2,7 @@ use crate::error::{AppError, AppResult};
 use crate::models::{EngineKind, LlmConfig, ModelInfo};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::borrow::Cow;
 use std::time::Duration;
 
 #[derive(Debug, Serialize)]
@@ -90,6 +91,19 @@ fn apply_auth(req: reqwest::RequestBuilder, config: &LlmConfig) -> reqwest::Requ
     match &config.api_key {
         Some(key) if !key.trim().is_empty() => req.bearer_auth(key.trim()),
         _ => req,
+    }
+}
+
+fn is_qwen_model(model: &str) -> bool {
+    model.to_ascii_lowercase().contains("qwen")
+}
+
+/// Qwen3 系列支持在用户消息末尾加 `/no_think` 关闭思考模式。
+fn prepare_user_prompt<'a>(config: &LlmConfig, user: &'a str) -> Cow<'a, str> {
+    if is_qwen_model(&config.model) && !user.contains("/no_think") {
+        Cow::Owned(format!("{user}\n\n/no_think"))
+    } else {
+        Cow::Borrowed(user)
     }
 }
 
@@ -193,6 +207,7 @@ async fn chat_completion(
 ) -> AppResult<String> {
     let client = build_client(config)?;
     let url = endpoint(&config.base_url, "chat/completions");
+    let user_prompt = prepare_user_prompt(config, user);
 
     let request = ChatRequest {
         model: &config.model,
@@ -203,7 +218,7 @@ async fn chat_completion(
             },
             ChatMessage {
                 role: "user",
-                content: user,
+                content: user_prompt.as_ref(),
             },
         ],
         temperature: config.temperature,
@@ -558,5 +573,45 @@ mod tests {
     fn reasoning_effort_is_omitted_when_disabled() {
         let value = serde_json::to_value(sample_request(None)).unwrap();
         assert!(value.get("reasoning_effort").is_none());
+    }
+
+    fn sample_config(model: &str) -> LlmConfig {
+        LlmConfig {
+            engine: EngineKind::LmStudio,
+            base_url: "http://localhost:1234/v1".into(),
+            api_key: None,
+            model: model.into(),
+            temperature: 0.1,
+            max_tokens: 2048,
+            timeout_secs: 180,
+            max_retries: 3,
+        }
+    }
+
+    #[test]
+    fn qwen_models_get_no_think_directive() {
+        let config = sample_config("qwen3.5-0.8b");
+        assert_eq!(
+            prepare_user_prompt(&config, "请输出 JSON").as_ref(),
+            "请输出 JSON\n\n/no_think"
+        );
+    }
+
+    #[test]
+    fn non_qwen_models_do_not_get_no_think() {
+        let config = sample_config("gemma-4-e4b");
+        assert_eq!(
+            prepare_user_prompt(&config, "请输出 JSON").as_ref(),
+            "请输出 JSON"
+        );
+    }
+
+    #[test]
+    fn no_think_is_not_duplicated() {
+        let config = sample_config("Qwen3-8B");
+        assert_eq!(
+            prepare_user_prompt(&config, "请输出 JSON\n\n/no_think").as_ref(),
+            "请输出 JSON\n\n/no_think"
+        );
     }
 }

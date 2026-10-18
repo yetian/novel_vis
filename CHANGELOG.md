@@ -3,6 +3,12 @@
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/) 与 [Conventional Commits](https://www.conventionalcommits.org/zh-hans/)。
 每个有意义的功能实现或修复均递增 PATCH 版本。
 
+## [0.1.29] - feat(llm)
+
+- Qwen 模型（名称包含 `qwen`，不区分大小写）的用户消息末尾自动追加 `/no_think`，兼容 Qwen3 的思考软开关。
+- 保留 `reasoning_effort: "none"` 作为通用关闭方式；两者共同确保思考模型不消耗推理 token。
+- 增加 Qwen 指令注入、非 Qwen 跳过与重复指令测试。
+
 ## [0.1.28] - feat(llm)
 
 - 所有模型请求默认发送 `reasoning_effort: "none"`，关闭 LM Studio / Ollama 思考模型的推理输出，避免推理 token 挤占 JSON 与正文预算。

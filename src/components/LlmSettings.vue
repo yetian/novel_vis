@@ -209,7 +209,7 @@ const mb = (bytes: number) => (bytes / 1024 / 1024).toFixed(0) + " MiB";
         <h4 class="mb-2 text-sm font-semibold text-slate-200">本地引擎快速上手</h4>
         <p><strong class="text-jade-400">LM Studio：</strong>加载模型后，在 "Local Server" 标签页启动服务（默认端口 1234），地址填 <code>http://localhost:1234/v1</code>。</p>
         <p class="mt-1"><strong class="text-jade-400">Ollama：</strong>执行 <code>ollama pull qwen2.5:1.5b</code> 与 <code>ollama serve</code>，地址填 <code>http://localhost:11434/v1</code>（应用会自动回退到 <code>/api/tags</code> 列出模型，并通过 <code>/api/ps</code> 显示已加载模型）。</p>
-        <p class="mt-1"><strong class="text-jade-400">思考模式：</strong>应用默认发送 <code>reasoning_effort: "none"</code> 关闭思考模型的长推理，避免挤占 JSON 输出；引擎不支持该字段时会自动降级重试。</p>
+        <p class="mt-1"><strong class="text-jade-400">思考模式：</strong>应用默认发送 <code>reasoning_effort: "none"</code> 关闭思考模型的长推理，Qwen 模型还会追加 <code>/no_think</code>；引擎不支持对应字段时会自动降级重试。</p>
       </section>
 
       <section class="panel p-5 text-xs leading-relaxed text-slate-400">
