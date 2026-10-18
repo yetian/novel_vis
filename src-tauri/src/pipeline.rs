@@ -213,7 +213,7 @@ pub async fn run_extraction(
     Ok(results)
 }
 
-const BOOK_SUMMARY_SYSTEM: &str = r#"你是中文小说编辑。只输出一个 JSON 对象，只含 summary 字段。只依据材料，不编造；简体中文；summary 只写正文，不含标题、书名/作者、分点或占位符。"#;
+const BOOK_SUMMARY_SYSTEM: &str = r#"你是中文小说编辑。只输出一个 JSON 对象，只含 summary 字段。只依据材料，不编造；简体中文；summary 只写正文，不含标题、书名/作者、分点或占位符。严格遵守用户给出的字数上限，超出会被截断。"#;
 
 /// 用章节摘要生成全书总览。章节很多时先分批生成阶段摘要，再汇总最终总览。
 pub async fn summarize_book(
@@ -287,13 +287,13 @@ pub async fn summarize_book(
                 0,
             );
             let prompt = format!(
-                "《{}》第 {}/{} 组摘要。用 180-260 字概括本阶段剧情、人物与地点，不提前后续，不分点。只输出 JSON，summary 为完整正文。\n\n{}",
+                "《{}》第 {}/{} 组摘要。用 180-240 字概括本阶段剧情、人物与地点，严格不超过 240 字，超出会截断；不提前后续，不分点。只输出 JSON，summary 为完整正文。\n\n{}",
                 title,
                 i + 1,
                 batches.len(),
                 batch
             );
-            stage_summaries.push(call_summary(config, &prompt).await?);
+            stage_summaries.push(call_summary(config, &prompt, 240).await?);
             emit_progress(
                 app,
                 &book_id,
@@ -321,7 +321,7 @@ pub async fn summarize_book(
         "以下是全书的章节摘要"
     };
     let prompt = format!(
-        "《{title}》{author_line}\n{scope}。写 300-500 字全书总览：核心设定/世界/主线、开端—发展—转折—结局、3-8 位关键人物；只依据材料，不编造，不分点。summary 只写正文，无标题、书名/作者或占位符。只输出 JSON，summary 只写正文。\n\n{}",
+        "《{title}》{author_line}\n{scope}。写 300-450 字全书总览，严格不超过 450 字，超出会截断：核心设定/世界/主线、开端—发展—转折—结局、3-8 位关键人物；只依据材料，不编造，不分点。summary 只写正文，无标题、书名/作者或占位符。只输出 JSON，summary 只写正文。\n\n{}",
         material
     );
     emit_progress(
@@ -335,7 +335,7 @@ pub async fn summarize_book(
         "正在汇总全书总览…",
         0,
     );
-    let final_summary = call_summary(config, &prompt).await?;
+    let final_summary = call_summary(config, &prompt, 450).await?;
     emit_progress(
         app,
         &book_id,
@@ -359,7 +359,7 @@ pub async fn summarize_book(
     Ok(Some(summary))
 }
 
-const BIO_SYSTEM: &str = r#"你是中文小说资料编辑。只输出一个 JSON 对象，只含 biography 字段。根据资料写传记，2000 字以内；只写资料中的事实，不编造；简体中文；按时间顺序写成连贯段落，不要标题、分点、前言或占位符。"#;
+const BIO_SYSTEM: &str = r#"你是中文小说资料编辑。只输出一个 JSON 对象，只含 biography 字段。根据资料写传记，最多 1800 字，严格不超过上限；只写资料中的事实，不编造；简体中文；按时间顺序写成连贯段落，不要标题、分点、前言或占位符。"#;
 
 /// 按需生成人物 / 地点 / 物品传记。返回 (标题, 正文)。
 pub async fn generate_biography(
@@ -497,7 +497,7 @@ pub async fn generate_biography(
     }
     let material = truncate(&lines.join("\n"), 7_000);
     let prompt = format!(
-        "为{kind_label}《{title}》写一篇传记，2000 字以内。按时间顺序叙述其经历、变化与关系；只依据下面资料，不编造，不写标题或分点。只输出 JSON，biography 为完整正文。\n\n{material}"
+        "为{kind_label}《{title}》写一篇传记，尽量 1200-1800 字，严格不超过 1800 字（超出会截断）。按时间顺序叙述其经历、变化与关系；只依据下面资料，不编造，不写标题或分点。只输出 JSON，biography 为完整正文。\n\n{material}"
     );
     let mut cfg = config.clone();
     cfg.max_tokens = cfg.max_tokens.max(4_096);
@@ -512,7 +512,7 @@ pub async fn generate_biography(
     if !biography_usable(&biography) {
         return Err(AppError::Llm("传记内容为空或无效".into()));
     }
-    Ok((title, biography.chars().take(2_000).collect()))
+    Ok((title, trim_to_sentence(&biography, 1_800)))
 }
 
 fn biography_usable(text: &str) -> bool {
@@ -616,11 +616,12 @@ pub fn pack_summary_lines(lines: &[String], max_chars: usize) -> Vec<String> {
     out
 }
 
-async fn call_summary(config: &LlmConfig, prompt: &str) -> AppResult<String> {
+async fn call_summary(config: &LlmConfig, prompt: &str, max_chars: usize) -> AppResult<String> {
     let mut cfg = config.clone();
     cfg.max_tokens = cfg.max_tokens.max(1_400);
     let raw = llm::chat_json(&cfg, BOOK_SUMMARY_SYSTEM, prompt, true).await?;
     if let Some(summary) = parse_summary_output(&raw) {
+        let summary = trim_to_sentence(&summary, max_chars);
         if summary_is_usable(&summary) {
             return Ok(summary);
         }
@@ -638,7 +639,9 @@ async fn call_summary(config: &LlmConfig, prompt: &str) -> AppResult<String> {
         retry_prompt = format!("{prompt}\n\n{plain_sentence}");
     }
     let retry_raw = llm::chat_json(&cfg, retry_system, &retry_prompt, false).await?;
-    let summary = parse_summary_output(&retry_raw).unwrap_or_default();
+    let summary = parse_summary_output(&retry_raw)
+        .map(|text| trim_to_sentence(&text, max_chars))
+        .unwrap_or_default();
     if summary_is_usable(&summary) {
         return Ok(summary);
     }
@@ -647,6 +650,24 @@ async fn call_summary(config: &LlmConfig, prompt: &str) -> AppResult<String> {
         summary.chars().count(),
         truncate(&retry_raw, 160)
     )))
+}
+
+/// 超长时在最近的句末标点处截断，避免把句子硬切一半。
+fn trim_to_sentence(text: &str, max_chars: usize) -> String {
+    let trimmed = text.trim();
+    let chars: Vec<char> = trimmed.chars().collect();
+    if chars.len() <= max_chars {
+        return trimmed.to_string();
+    }
+    let floor = max_chars.saturating_mul(3) / 4;
+    let mut cut = max_chars;
+    for i in (floor..max_chars).rev() {
+        if matches!(chars[i], '。' | '！' | '？' | '；' | '.' | '!' | '?' | ';') {
+            cut = i + 1;
+            break;
+        }
+    }
+    chars[..cut].iter().collect::<String>().trim().to_string()
 }
 
 /// 过滤 “...”“……”“待生成” 之类占位符，避免把无效内容写进数据库。
@@ -1789,5 +1810,18 @@ mod tests {
         assert!(summary_is_usable(
             "这是一个真正生成的全书总览，包含主要人物、地点与剧情推进。"
         ));
+    }
+
+    #[test]
+    fn trim_to_sentence_respects_limit_and_boundary() {
+        assert_eq!(trim_to_sentence("短文本", 10), "短文本");
+        assert_eq!(
+            trim_to_sentence("一二三四五六七八。九十", 10),
+            "一二三四五六七八。"
+        );
+        assert_eq!(
+            trim_to_sentence("一二三四五六七八九十", 10),
+            "一二三四五六七八九十"
+        );
     }
 }
