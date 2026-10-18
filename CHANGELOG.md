@@ -3,6 +3,13 @@
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/) 与 [Conventional Commits](https://www.conventionalcommits.org/zh-hans/)。
 每个有意义的功能实现或修复均递增 PATCH 版本。
 
+## [0.1.41] - refactor(prompt)
+
+- 大幅精简抽取系统提示词：合并重复说明，只保留字段规则、紧凑模板与检查清单，降低小模型上下文负担。
+- 用户提示只保留章节元数据、正文、输出边界与人物/地点/完整闭合要求。
+- JSON 修复提示改为“错误 + 上次输出 + 原任务 + 修复要点”，删除重复字段清单。
+- 全书总览与阶段摘要提示同步精简，阶段/最终摘要长度与结构要求更直接。
+
 ## [0.1.40] - fix(prompt)
 
 - 抽取提示词要求紧凑 JSON、缩短 role/description/usage/plot_summary，内容多时压缩描述而不是截断结构。

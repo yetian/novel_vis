@@ -211,11 +211,7 @@ pub async fn run_extraction(
     Ok(results)
 }
 
-const BOOK_SUMMARY_SYSTEM: &str = r#"你是资深中文小说编辑。你只输出一个 JSON 对象，不得输出解释、Markdown 或代码块。
-输出格式：只包含一个 summary 字段，值为你撰写的总览正文。
-summary 中只放总览正文：不要写标题、“全书总览”等字样、书名/作者、分点、小标题、章节列表、字数说明、免责声明，也不要写“好的”“以下是”等前言后语；只写连贯的正文段落。
-要求：只依据用户提供的章节/阶段摘要写作；不要编造未给出的情节；用简体中文；语言简洁、连贯、有概括力；保留关键人物与地点的原文名称。
-summary 必须是完整正文，不得只写省略号、占位符或复述材料；长度按用户要求。"#;
+const BOOK_SUMMARY_SYSTEM: &str = r#"你是中文小说编辑。只输出一个 JSON 对象，只含 summary 字段。只依据材料，不编造；简体中文；summary 只写正文，不含标题、书名/作者、分点或占位符。"#;
 
 /// 用章节摘要生成全书总览。章节很多时先分批生成阶段摘要，再汇总最终总览。
 pub async fn summarize_book(
@@ -260,7 +256,7 @@ pub async fn summarize_book(
         let mut stage_summaries = Vec::with_capacity(batches.len());
         for (i, batch) in batches.iter().enumerate() {
             let prompt = format!(
-                "以下是《{}》第 {}/{} 组的章节摘要。请只根据这一组材料，用 180-260 字连贯概括本阶段的剧情推进、主要人物与地点变化。summary 只写正文：不要标题、书名/作者、前言、分点、章节列表；不要提前概括后续，不要复述材料，保留关键专名。只输出 JSON，summary 字段填入完整正文，不要写省略号或占位符。\n\n{}",
+                "《{}》第 {}/{} 组摘要。用 180-260 字概括本阶段剧情、人物与地点，不提前后续，不分点。只输出 JSON，summary 为完整正文。\n\n{}",
                 title,
                 i + 1,
                 batches.len(),
@@ -283,7 +279,7 @@ pub async fn summarize_book(
         "以下是全书的章节摘要"
     };
     let prompt = format!(
-        "《{title}》{author_line}\n{scope}。书名与作者仅用于识别作品，不要写进 summary。请写一段 300-500 字的全书总览正文，要求：\n1. 概括核心设定、世界/空间与主线冲突；\n2. 梳理开端—发展—转折—结局（若材料未覆盖结局，写到当前进展，不要猜测）；\n3. 点出 3-8 位关键人物及其关系或作用；\n4. 只依据下面材料，不编造未出现的情节，保留关键人物/地点的原文名称；\n5. 不分点、不复述章节列表，写成连贯的段落；\n6. summary 中只放正文，不要标题、“全书总览”等字样、书名/作者、前言、说明或章节列表。\n只输出 JSON，summary 字段填入完整总览正文，不要写省略号或占位符。\n\n{}",
+        "《{title}》{author_line}\n{scope}。写 300-500 字全书总览：核心设定/世界/主线、开端—发展—转折—结局、3-8 位关键人物；只依据材料，不编造，不分点。summary 只写正文，无标题、书名/作者或占位符。只输出 JSON，summary 只写正文。\n\n{}",
         material
     );
     let summary = call_summary(config, &prompt).await?;
@@ -326,11 +322,10 @@ async fn call_summary(config: &LlmConfig, prompt: &str) -> AppResult<String> {
     }
 
     // 小模型容易把提示里的占位符原样抄回来；改用纯文本再试一次。
-    let retry_system = "你是资深中文小说编辑。请直接输出总览正文，只写正文；不要 JSON、标题、书名/作者、前言、说明、分点、Markdown、省略号或占位符。";
-    let json_sentence = "只输出 JSON，summary 字段填入完整正文，不要写省略号或占位符。";
-    let json_sentence_long = "只输出 JSON，summary 字段填入完整总览正文，不要写省略号或占位符。";
-    let plain_sentence =
-        "请直接输出总览正文：不要标题、书名/作者、JSON、解释、Markdown、分点、省略号或占位符。";
+    let retry_system = "直接输出总览正文，只写正文；不要 JSON、标题、书名/作者、解释或占位符。";
+    let json_sentence = "只输出 JSON，summary 为完整正文。";
+    let json_sentence_long = "只输出 JSON，summary 只写正文。";
+    let plain_sentence = "直接输出总览正文：不要标题、书名/作者、JSON、解释或占位符。";
     let mut retry_prompt = prompt
         .replace(json_sentence, plain_sentence)
         .replace(json_sentence_long, plain_sentence);
@@ -1031,7 +1026,7 @@ fn build_user_prompt(
     text: &str,
 ) -> String {
     format!(
-        "【章节序号】{}\n【章节标题】{}\n【分块】{}/{}\n\n【正文】\n{}\n\n【输出要求】\n1. 只分析上面的【正文】，元数据只用于填写 chapter_index 和 chapter_title。\n2. 只输出一个 JSON 对象，不要 Markdown、解释或前后缀文字。\n3. 必须包含全部顶层字段：chapter_index、chapter_title、narrative_perspective、temporal、spatial、characters、items_and_skills、plot_summary。\n4. 严格按系统提示的字段规则和枚举值填写；characters / items_and_skills 没有内容时才用 []。\n5. characters 不要只列主要人物：对话说话人、被称呼者、只被提及者都要检查；全名与简称合并为一条。\n6. 只要正文出现明确场所，spatial.site 就不能为空。\n7. 输出紧凑 JSON（不要缩进美化）；人物/物品很多时压缩 role、description、usage_in_chapter，但必须保留条目、闭合所有括号并完整输出。",
+        "【章节序号】{}\n【章节标题】{}\n【分块】{}/{}\n\n【正文】\n{}\n\n只输出一个 JSON 对象，紧凑、完整输出并闭合。8 个顶层字段齐全；人物覆盖对话说话人、被称呼者与只被提及者，合并全名与简称；正文有场所则 site 非空。",
         chapter.chapter_index,
         chapter.title,
         chunk_index + 1,
@@ -1042,7 +1037,7 @@ fn build_user_prompt(
 
 fn build_repair_prompt(original: &str, bad_output: &str, error: &str) -> String {
     format!(
-        "上一次输出无法解析为合法 JSON。请修复它。\n\n【解析错误】{}\n\n【上一次输出】\n{}\n\n【原始任务】\n{}\n\n【修复要求】\n1. 只修复 JSON 语法和结构，不要改写剧情内容，保留原有字段和值。\n2. 去掉 Markdown 代码块、解释、前言和后语。\n3. 字符串必须用双引号；换行/制表符转义为 \\n / \\t；不要尾随逗号。\n4. 若输出被截断，补全引号和括号，重新输出一个完整对象。\n5. 顶层字段必须齐全：chapter_index、chapter_title、narrative_perspective、temporal、spatial、characters、items_and_skills、plot_summary。\n6. 输入内容很多时压缩 role、description、usage_in_chapter，但不要删除人物/物品条目。\n7. 如果上次输出因长度限制被截断，请重写一个更紧凑的完整 JSON，不要只续写半截对象。\n8. 只输出 JSON，从 {{ 开始、到 }} 结束。",
+        "上次输出不是合法 JSON。错误：{}\n上次输出：{}\n原任务：{}\n只修 JSON 语法，保留原字段和值；去掉 Markdown/解释；字符串用双引号，无尾随逗号；若被长度截断，重写完整紧凑 JSON。只输出 JSON，从 {{ 开始、到 }} 结束。",
         error,
         truncate(bad_output, 4000),
         truncate(original, 4000)
@@ -1106,54 +1101,24 @@ fn emit_log(app: &AppHandle, book_id: i64, message: &str) {
 }
 
 /// 系统提示词：面向小模型，先给字段规则，再给固定模板和输出前检查。
-pub const SYSTEM_PROMPT: &str = r#"你是中文小说叙事结构抽取器。任务：读取【正文】，只输出一个合法 JSON 对象。
-不要解释、不要思考过程、不要 Markdown、不要代码块、不要“好的/以下是”。第一个字符必须是 {，最后一个字符必须是 }。
-本任务适用于任意题材（现实、都市、历史、战争、科幻、武侠、玄幻等），不要预设作品类型。
+pub const SYSTEM_PROMPT: &str = r#"你是中文小说抽取器。只输出一个合法 JSON 对象，不要解释、Markdown、代码块；首字符 {，末字符 }。适用于任意题材。
 
-## 字段规则
-- 必须输出全部 8 个顶层字段，不能缺 key，不能输出 null。未知值用 ""、[]、0 或 false。
-- chapter_index：原样使用【章节序号】的整数；chapter_title：原样使用【章节标题】。
-- narrative_perspective：第一人称写 first_person，第三人称写 third_person。
-- temporal.type 只能是 CONTINUOUS（连续）、JUMP_FORWARD（时间后跳）、FLASHBACK（倒叙）、UNCERTAIN（无法判断）之一。raw_marker 抄原文时间词，没有写 ""；relative_delta_days 换算成天数（倒叙用负数，无法判断写 0）；reference_anchor 写所参照的上一事件，没有写 ""。
-- spatial.site 必须填写本段人物活动/所在的明确地点（房间、街道、山门、城池、山谷、宫殿等）。只要正文提到一个地名或场所，就必须填 site，不要因为不确定 region/world 而把 site 留空；发生移动时 site 是移动后的所在地，source_site 是起点。
-- spatial.world / region：只填原文明确的上级世界/区域，不确定可留空，但不要因此把 site 留空。只有整段完全没有任何地点/场所信息时，site/region/world 才可全空。不要补“现实世界/某城市”等泛化标签，也不要用人物/物品名代替地点名。
-- movement_type 只能是 STAY、LOCAL_MOVE、TELEPORT、ASCENSION、DUNGEON_ENTER、DUNGEON_EXIT 之一；没移动写 STAY；仅在明确移动时填 source_site。
-- spatial.importance：1–5 的整数，5=全书核心舞台，4=主要地点，3=重要地点，2=次要地点，1=过场地点；不确定写 3。
-- characters：列出本段所有具名人物，包括主角、配角、反派、对话的说话人与被称呼者，以及只被提及但未出场者；不要只列剧情摘要中的主要人物。不要列作者、译者、序言作者等现实身份，不要列“众人/士兵/弟子”等群体或“他/她”等代词。同名、绰号、尊称、简称合并为一个规范名，只输出一次；同时出现全名与简称时用全名，简称不要另起条目。name 必须能在正文中找到（第一人称主角找不到名字时写 "PROTAGONIST_FIRST_PERSON"）。
-- character.action 只能是 FIRST_APPEARANCE（本段首次出现）、ACTIVE（本段正常出场）、DEPARTURE（明确离开）、DEATH（明确死亡）之一。
-- character.role 写具体身份/关系，如“主角”“主角的师父”“反派首领”，不要写“人物/角色/未知”；description 写外貌或身份，没有写 ""。role 不超过 12 字，description 不超过 20 字。
-- character.importance：1–5 的整数，5=全书核心主角，4=主要人物，3=重要配角，2=次要人物，1=路人/一次性角色；只被提及一两次的填 1–2。
-- items_and_skills：只列本段实际出现或明确被提及的物品/功法/传承；name 用原文写法；category 只能是 ITEM、SKILL、LEGACY 之一。importance 1–5（5=贯穿全书的核心，4=关键，3=重要，2=次要，1=过场）。acquired_from.spatial / temporal 只在原文明确给出时填写，否则写 ""；usage_in_chapter 写本段用途，没有写 ""，不超过 16 字；future_hook_flag 只在原文明确暗示后续用途时写 true，否则 false。
-- plot_summary：≤40 字，一句话，包含本段最关键的人物/地点/事件；不要写成人物清单。
-- JSON 使用紧凑格式：对象和数组不要换行缩进，不要重复条目。内容很多时压缩描述文字，但必须保留条目并保证 JSON 完整闭合；绝不能中途截断。
-- 所有自然语言字段用简体中文；专有名词保留原文写法；仅 JSON 键名与枚举值用英文。
-- 严禁编造：只写【正文】中确凿出现的内容；不要套用示例、其它作品或常识。characters / items_and_skills 没有内容时才用 []。
+字段规则：
+- 8 个顶层字段必须齐全，不得为 null；未知用 ""、[]、0、false。
+- chapter_index、chapter_title 原样使用输入。
+- narrative_perspective 只能是 first_person 或 third_person；第一人称找不到主角名时写 "PROTAGONIST_FIRST_PERSON"。
+- temporal.type 只能是 CONTINUOUS、JUMP_FORWARD、FLASHBACK、UNCERTAIN；raw_marker 抄原文，无则 ""；relative_delta_days 为天数，倒叙负数，不明 0；reference_anchor 无则 ""。
+- spatial.world/region/site 只取原文；正文出现场所就必须填 site；移动时 site 为目的地、source_site 为起点；movement_type 只能是 STAY、LOCAL_MOVE、TELEPORT、ASCENSION、DUNGEON_ENTER、DUNGEON_EXIT，未移动写 STAY。不确定上级世界/区域可留空，但不能因此留空 site；不要补泛化地名。
+- spatial/character/item 的 importance 为 1–5 整数（5 最重要，1 过场）。
+- characters 列出所有具名人物，含只被提及者、对话说话人与被称呼者；排除作者/译者/无名群体/代词；全名与简称合并，name 用全名，每人只输出一次。action 只能是 FIRST_APPEARANCE（本段首次）、ACTIVE（出场）、DEPARTURE（离开）、DEATH（死亡）；role≤12 字，description≤20 字。
+- items_and_skills 只列出现或明确提及的物品/功法/传承；category 只能是 ITEM、SKILL、LEGACY；usage_in_chapter≤16 字；future_hook_flag 为布尔。
+- plot_summary≤40 字，一句话，含最关键人物/地点/事件。
+- 只写正文确凿出现的内容，不编造；自然语言用简体中文，专有名词保留原文；JSON 必须紧凑、完整闭合，不能中途截断。
 
-## 数组元素格式
-characters 的元素：
-{"name":"","action":"ACTIVE","role":"","description":"","importance":3}
-items_and_skills 的元素：
-{"name":"","category":"ITEM","importance":3,"acquired_from":{"spatial":"","temporal":""},"usage_in_chapter":"","future_hook_flag":false}
+输出模板（键名和层级固定）：
+{"chapter_index":0,"chapter_title":"","narrative_perspective":"third_person","temporal":{"type":"CONTINUOUS","raw_marker":"","relative_delta_days":0,"reference_anchor":""},"spatial":{"world":"","region":"","site":"","movement_type":"STAY","source_site":"","importance":3},"characters":[{"name":"","action":"ACTIVE","role":"","description":"","importance":3}],"items_and_skills":[{"name":"","category":"ITEM","importance":3,"acquired_from":{"spatial":"","temporal":""},"usage_in_chapter":"","future_hook_flag":false}],"plot_summary":""}
 
-## 输出模板（键名、层级、类型必须完全一致）
-{
-  "chapter_index": 0,
-  "chapter_title": "",
-  "narrative_perspective": "third_person",
-  "temporal": {"type": "CONTINUOUS", "raw_marker": "", "relative_delta_days": 0, "reference_anchor": ""},
-  "spatial": {"world": "", "region": "", "site": "", "movement_type": "STAY", "source_site": "", "importance": 3},
-  "characters": [],
-  "items_and_skills": [],
-  "plot_summary": ""
-}
-
-## 输出前检查
-- 第一个字符是 {，最后一个字符是 }；没有 Markdown、解释或多余文字。
-- 8 个顶层字段齐全；字符串用双引号；没有尾随逗号；括号和引号闭合。
-- chapter_index / chapter_title 与输入一致；characters / items_and_skills 中的 name 都能在正文找到。
-- characters 是否覆盖所有具名人物、对话说话人与被称呼者？同一人物的全名与简称是否已合并？
-- 只要正文出现场所，spatial.site 是否已填写？
-- 输出是否完整闭合、没有在中途截断？只输出这个 JSON 对象。
+输出前检查：8 字段齐全；JSON 完整闭合；人物/物品名能在正文找到；有场所则 site 非空；没有 Markdown 或解释。
 "#;
 
 /// 过滤掉未在本段正文中出现的实体，抑制模型幻觉（例如照搬示例或其它作品的人名）。
@@ -1494,10 +1459,10 @@ mod tests {
             "items_and_skills",
             "plot_summary",
         ] {
-            assert!(prompt.contains(key), "user prompt missing {key}");
             assert!(SYSTEM_PROMPT.contains(key), "system prompt missing {key}");
         }
         assert!(prompt.contains("只输出一个 JSON 对象"));
+        assert!(prompt.contains("8 个顶层字段"));
         assert!(prompt.contains("完整输出"));
         assert!(SYSTEM_PROMPT.contains("输出前检查"));
         assert!(SYSTEM_PROMPT.contains("完整闭合"));
