@@ -31,7 +31,7 @@ const chapterByIndex = computed(() => {
 
 const worldOf = (w?: string | null) => cleanWorld(w);
 const siteOf = (c: { world?: string | null; region?: string | null; site?: string | null }) =>
-  cleanPlace(c.site) || cleanPlace(c.region) || worldOf(c.world) || "未标注空间";
+  cleanPlace(c.site) || cleanPlace(c.region) || worldOf(c.world);
 const spaceKey = (c: { world?: string | null; region?: string | null; site?: string | null }) =>
   `${worldOf(c.world)}::${cleanPlace(c.region)}::${siteOf(c)}`;
 
@@ -58,6 +58,8 @@ const spaces = computed<SpaceAgg[]>(() => {
   const map = new Map<string, SpaceAgg>();
 
   for (const c of chapters.value) {
+    const site = siteOf(c);
+    if (!site) continue;
     const key = spaceKey(c);
     chapterSpace.set(c.chapter_index, key);
     let s = map.get(key);
@@ -66,7 +68,7 @@ const spaces = computed<SpaceAgg[]>(() => {
         key,
         world: worldOf(c.world),
         region: cleanPlace(c.region) || null,
-        site: siteOf(c),
+        site,
         chapters: [],
         chars: new Set(),
         items: new Set(),
@@ -152,6 +154,10 @@ const spaces = computed<SpaceAgg[]>(() => {
         a.firstChapter - b.firstChapter,
     );
 });
+
+const unlocatedChapters = computed(
+  () => chapters.value.filter((c) => !siteOf(c)).length,
+);
 
 const eventsByEntity = computed(() => {
   const m = new Map<number, EntityEventRow[]>();
@@ -331,6 +337,9 @@ const sortedByCount = (ids: Set<number>, counts: Map<number, number>) =>
                 ? "地点按全书重要度排序（模型判断 + 覆盖章节 + 事件频率 + 跨度 + 人物丰富度）"
                 : "物品/功法按全书重要度排序（模型判断 + 覆盖章节 + 出现频率 + 跨度）"
             }}
+          </p>
+          <p v-if="tab === 'spaces' && unlocatedChapters" class="mt-0.5 text-[11px] text-slate-500">
+            另有 {{ unlocatedChapters }} 章未识别到空间，未参与重要度排序。
           </p>
         </div>
 

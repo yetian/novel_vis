@@ -1,7 +1,7 @@
 {
   "name": "chronospace-reader",
   "private": true,
-  "version": "0.1.34",
+  "version": "0.1.35",
   "type": "module",
   "description": "ChronoSpace Reader (时空编年史) - 本地小说时空、人物与因果抽取与可视化桌面应用",
   "scripts": {

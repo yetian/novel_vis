@@ -1,6 +1,6 @@
 # ChronoSpace Reader · 架构设计蓝图（design.md）
 
-> 当前版本：**v0.1.34**
+> 当前版本：**v0.1.35**
 > 本文档描述系统架构、数据流、SQLite 关系模式、状态机、协议契约与 UI 组件层级，并与代码库保持同步。
 
 ---
@@ -196,7 +196,7 @@ erDiagram
 - 迁移策略：全部语句使用 `CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS`，可幂等重复执行。
 - 存储位置：由 `paths.rs` 解析为用户配置目录下的 `local/<APPNAME>`（Linux `~/.config/local/chronospace-reader/`，macOS `~/Library/Application Support/local/chronospace-reader/`，Windows `%APPDATA%\local\chronospace-reader\`），可用 `CHRONOSPACE_DATA_DIR` 覆盖。数据库文件 `chronospace.sqlite3`；同样的目录保存 `llm_config.json`。原文不落盘，仅驻内存。
 - 一个章节可对应**多个** `spatiotemporal_nodes`（分块抽取），画布查询取每章最早节点作为代表。
-- **并发**：`ExtractionRequest.concurrency`（1–4）控制 `run_extraction` 的批处理：以 `tokio::task::JoinSet` 每批并发处理章节，DB 写入由 `Mutex<Connection>` 串行化。引擎需支持并行/批处理才能真正加速。
+- **并发**：`ExtractionRequest.concurrency`（1–4）控制 `run_extraction` 的滑动窗口：以 `tokio::task::JoinSet` 始终保持最多 N 个章节任务，完成一个立即补位；某个章节的 JSON 重试只占用一个槽位，不会阻塞整批。DB 写入由 `Mutex<Connection>` 串行化。引擎需支持并行/批处理才能真正加速。
 - **重抽覆盖**：`skip_extracted=false` 时 `run_extraction` 先调用 `clear_book_extraction`（删除该书 `spatiotemporal_nodes` / `entity_events` / `entities` 并清空章节摘要），再重新处理，避免重复数据；前端在开始前弹出确认。
 
 ---
@@ -252,7 +252,7 @@ erDiagram
 
 **空间与物品重要度**：空间节点与物品/功法条目同样输出 1–5 的 `importance`。前端按全书汇总：空间用「模型判断 + 覆盖章节 + 事件频率 + 跨度 + 出场人物丰富度」，物品/功法用「模型判断 + 覆盖章节 + 出现频率 + 跨度」；模型分缺失的旧数据自动退化为纯统计公式。空间/物品表按重要度降序，并支持“仅重要”过滤。
 
-**空间来源**：`world/region/site` 只允许来自原文；不再注入“现实世界/某城市”等提示词占位值。展示层会将旧数据中的“现实世界”“未知空间”等泛化标签视为空（`utils/space.ts`）。
+**空间来源**：`world/region/site` 只允许来自原文；提示词要求只要正文出现场所就必须填写 `site`，不能因为上级区域不确定而留空，也不再注入“现实世界/某城市”等提示词占位值。展示层会将旧数据中的“现实世界”“未知空间”等泛化标签视为空（`utils/space.ts`）；空间重要度表会跳过完全未识别到空间的章节，只在页头显示数量，避免“未标注空间”吞掉全书统计。
 
 **题材无关与抗幻觉**：提示词不预设作品类型、不包含任何示例专有名词（避免小模型照搬示例造成「奇怪的人」）；`world/region/site` 也只取原文明确写出的名称，不强制“界”类术语，也不补“现实世界/某城市”等泛化标签。抽取后由 `ground_entries` 按当前分块正文校验：人物/物品名若非本段正文子串则丢弃（`PROTAGONIST_FIRST_PERSON` 与单字名豁免），过滤数量通过日志事件上报。
 

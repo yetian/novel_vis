@@ -3,6 +3,12 @@
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/) 与 [Conventional Commits](https://www.conventionalcommits.org/zh-hans/)。
 每个有意义的功能实现或修复均递增 PATCH 版本。
 
+## [0.1.35] - fix(extraction)
+
+- 并发调度改为滑动窗口：完成一个章节立即补位，单个章节的 JSON 修复重试不再拖住整批任务。
+- 抽取提示词强化空间识别：只要正文出现场所就必须填写 `site`，不能因不确定 region/world 而留空；移动时明确 site 是目的地、source_site 是起点。
+- 空间重要度表不再把“未标注空间”聚合成一个高权重地点；完全未识别空间的章节只统计数量，不参与排序。
+
 ## [0.1.34] - feat(import)
 
 - 合订本候选改为递归目录树（合集 → 书 → 章节），支持任意层级，不再只有一层子章节。

@@ -68,20 +68,21 @@ pub async fn run_extraction(
 
     let chapters: Vec<ParsedChapter> = book.chapters.clone();
     let mut results: Vec<ChapterExtractionResult> = Vec::with_capacity(total);
-    let mut pos = 0usize;
+    let mut next = 0usize;
+    // 滑动窗口：完成一个任务就补一个，避免某个章节的 JSON 重试拖住整批。
+    let mut set: tokio::task::JoinSet<ChapterExtractionResult> = tokio::task::JoinSet::new();
 
-    while pos < chapters.len() {
+    loop {
         if control.is_cancelled() {
             emit_log(&app, req.book_id, "任务已取消");
             break;
         }
         await_resume(&app, &control, req.book_id).await;
 
-        let mut set: tokio::task::JoinSet<ChapterExtractionResult> = tokio::task::JoinSet::new();
-        let mut spawned = 0usize;
-
-        for chapter in chapters.iter().skip(pos).take(concurrency).cloned() {
-            let cp = pos + spawned;
+        while set.len() < concurrency && next < chapters.len() {
+            let cp = next;
+            let chapter = chapters[next].clone();
+            next += 1;
             let chapter_id = db.insert_chapter(
                 req.book_id,
                 chapter.chapter_index,
@@ -111,7 +112,6 @@ pub async fn run_extraction(
                     extraction: None,
                     error: None,
                 });
-                spawned += 1;
                 continue;
             }
 
@@ -135,21 +135,18 @@ pub async fn run_extraction(
                 )
                 .await
             });
-            spawned += 1;
         }
 
-        if spawned == 0 {
+        if set.is_empty() {
             break;
         }
 
-        while let Some(joined) = set.join_next().await {
+        if let Some(joined) = set.join_next().await {
             match joined {
                 Ok(r) => results.push(r),
                 Err(e) => emit_log(&app, req.book_id, &format!("并发任务失败: {e}")),
             }
         }
-
-        pos += spawned;
     }
 
     results.sort_by_key(|r| r.chapter_index);
@@ -946,7 +943,9 @@ pub const SYSTEM_PROMPT: &str = r#"你是中文小说叙事结构抽取器。任
 - chapter_index：原样使用【章节序号】的整数；chapter_title：原样使用【章节标题】。
 - narrative_perspective：第一人称写 first_person，第三人称写 third_person。
 - temporal.type 只能是 CONTINUOUS（连续）、JUMP_FORWARD（时间后跳）、FLASHBACK（倒叙）、UNCERTAIN（无法判断）之一。raw_marker 抄原文时间词，没有写 ""；relative_delta_days 换算成天数（倒叙用负数，无法判断写 0）；reference_anchor 写所参照的上一事件，没有写 ""。
-- spatial.world / region / site：只写【正文】明确出现的名称，不要补“现实世界/现代世界/某城市”等泛化标签，没有写 ""。movement_type 只能是 STAY、LOCAL_MOVE、TELEPORT、ASCENSION、DUNGEON_ENTER、DUNGEON_EXIT 之一；没移动写 STAY；仅在明确移动时填 source_site。
+- spatial.site 必须填写本段人物活动/所在的明确地点（房间、街道、山门、城池、山谷、宫殿等）。只要正文提到一个地名或场所，就必须填 site，不要因为不确定 region/world 而把 site 留空；发生移动时 site 是移动后的所在地，source_site 是起点。
+- spatial.world / region：只填原文明确的上级世界/区域，不确定可留空，但不要因此把 site 留空。只有整段完全没有任何地点/场所信息时，site/region/world 才可全空。不要补“现实世界/某城市”等泛化标签，也不要用人物/物品名代替地点名。
+- movement_type 只能是 STAY、LOCAL_MOVE、TELEPORT、ASCENSION、DUNGEON_ENTER、DUNGEON_EXIT 之一；没移动写 STAY；仅在明确移动时填 source_site。
 - spatial.importance：1–5 的整数，5=全书核心舞台，4=主要地点，3=重要地点，2=次要地点，1=过场地点；不确定写 3。
 - characters：列出本段所有具名人物，包括只被提及但未出场者；不要列作者、译者、序言作者等现实身份，不要列“众人/士兵/弟子”等群体或“他/她”等代词。同名、绰号、尊称、简称合并为一个规范名，只输出一次；name 必须能在正文中找到（第一人称主角找不到名字时写 "PROTAGONIST_FIRST_PERSON"）。
 - character.action 只能是 FIRST_APPEARANCE（本段首次出现）、ACTIVE（本段正常出场）、DEPARTURE（明确离开）、DEATH（明确死亡）之一。
