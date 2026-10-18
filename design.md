@@ -1,6 +1,6 @@
 # ChronoSpace Reader · 架构设计蓝图（design.md）
 
-> 当前版本：**v0.1.47**
+> 当前版本：**v0.1.48**
 > 本文档描述系统架构、数据流、SQLite 关系模式、状态机、协议契约与 UI 组件层级，并与代码库保持同步。
 
 ---
@@ -410,7 +410,7 @@ App.vue
 │   ├── SummaryView.vue       总览：全书总览 + 逐章摘要 + 统计 + 本章主要人物/首现人物/时空标签（点击书籍默认进入）
 │   ├── RelationGraph.vue     人物总览表：全书重要度排序，含首现/最近出场、主要活动地、同章共现区间；排除作者
 │   ├── EntityCards.vue       空间 / 物品总览表：全书重要度、事件数、最近章节、关联人物/物品与获得章节
-│   ├── EntityDetailDialog.vue 人物/地点/物品详情：传记、元数据、垂直时间线三个标签页；按需生成/重生成传记
+│   ├── EntityDetailDialog.vue 人物/地点/物品详情：传记、元数据、身份/关系、垂直时间线标签页；按需生成/重生成传记
 │   └── LlmSettings.vue       引擎选择 · 模型探测 · 参数 · 连接测试 · 数据管理
 ├── ConfirmDialog.vue         全局确认框（ui.askConfirm）
 └── ToastHost.vue             全局通知

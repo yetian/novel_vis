@@ -19,7 +19,7 @@ const library = useLibraryStore();
 const llm = useLlmStore();
 const ui = useUiStore();
 
-const tab = ref<"biography" | "metadata" | "timeline">("biography");
+const tab = ref<"biography" | "metadata" | "roles" | "timeline">("biography");
 const biography = ref<BiographyRow | null>(null);
 const loading = ref(false);
 const generating = ref(false);
@@ -56,6 +56,18 @@ const kindLabel = computed(() => {
           ? "传承"
           : "物品";
 });
+
+const tabs = computed(() => [
+  { key: "biography", label: "传记", icon: "fa-feather-pointed" },
+  { key: "metadata", label: "元数据", icon: "fa-circle-info" },
+  ...(props.target?.kind === "character"
+    ? [{ key: "roles", label: "身份 / 关系", icon: "fa-id-badge" }]
+    : []),
+  { key: "timeline", label: "时间线", icon: "fa-timeline" },
+]);
+
+const relations = computed(() => props.target?.relations ?? []);
+const roles = computed(() => props.target?.roles ?? []);
 
 const timeline = computed(() =>
   [...(props.target?.events ?? [])].sort(
@@ -140,11 +152,7 @@ async function generateBiography() {
 
         <div class="flex shrink-0 gap-1 border-b border-ink-600/60 px-4 pt-3">
           <button
-            v-for="item in [
-              { key: 'biography', label: '传记', icon: 'fa-feather-pointed' },
-              { key: 'metadata', label: '元数据', icon: 'fa-circle-info' },
-              { key: 'timeline', label: '时间线', icon: 'fa-timeline' },
-            ]"
+            v-for="item in tabs"
             :key="item.key"
             class="rounded-t-lg border-b-2 px-3 py-2 text-xs transition"
             :class="
@@ -209,6 +217,95 @@ async function generateBiography() {
                 <dd class="mt-0.5 whitespace-pre-line text-sm text-slate-300">{{ item.value || "—" }}</dd>
               </div>
             </dl>
+          </template>
+
+          <template v-else-if="tab === 'roles'">
+            <section>
+              <h4 class="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                身份 / 角色（{{ roles.length }}）
+              </h4>
+              <div
+                v-if="roles.length"
+                class="relative mt-3 ml-2 space-y-3 border-l border-ink-500/60 pl-5"
+              >
+                <div
+                  v-for="role in roles"
+                  :key="role.name"
+                  class="relative"
+                  :title="`首次获得：第 ${role.first_chapter + 1} 章 ${role.first_chapter_title}${role.first_place ? ` · ${role.first_place}` : ''}；共 ${role.count} 次`"
+                >
+                  <span
+                    class="absolute -left-[25px] top-2 h-2.5 w-2.5 rounded-full ring-4 ring-ink-800"
+                    :class="role.level_up ? 'bg-gold-400' : 'bg-jade-400'"
+                  />
+                  <span
+                    v-if="role.level_up"
+                    class="absolute -left-[25px] -top-3 h-3 w-px bg-gold-400/80"
+                  />
+                  <div class="rounded-lg border border-ink-600/50 bg-ink-900/30 px-3 py-2">
+                    <div class="flex flex-wrap items-center gap-2">
+                      <span class="text-sm font-medium text-slate-100">{{ role.name }}</span>
+                      <span
+                        v-if="role.level_up"
+                        class="rounded-full border border-gold-400/40 bg-gold-400/10 px-1.5 py-0.5 text-[9px] text-gold-300"
+                      >
+                        身份变化 / 晋升
+                      </span>
+                      <span class="text-[10px] text-slate-500">{{ role.count }} 次</span>
+                    </div>
+                    <div class="mt-1 text-[11px] text-slate-400">
+                      首次获得：第 {{ role.first_chapter + 1 }} 章
+                      <template v-if="role.first_chapter_title"> · {{ role.first_chapter_title }}</template>
+                      <template v-if="role.first_place"> · {{ role.first_place }}</template>
+                    </div>
+
+                    <details class="mt-2 border-t border-ink-600/40 pt-2">
+                      <summary class="cursor-pointer text-[11px] text-slate-400 hover:text-slate-200">
+                        查看身份轨迹（{{ role.trace.length }}）
+                      </summary>
+                      <ol class="mt-2 space-y-1.5 border-l border-ink-500/40 pl-3">
+                        <li v-for="trace in role.trace" :key="`${role.name}-${trace.chapter_index}-${trace.action}`">
+                          <div class="text-[11px] text-slate-300">
+                            第 {{ trace.chapter_index + 1 }} 章
+                            <template v-if="trace.chapter_title"> · {{ trace.chapter_title }}</template>
+                          </div>
+                          <div class="text-[10px] text-slate-500">
+                            <template v-if="trace.place">{{ trace.place }} · </template>
+                            {{ trace.action }}
+                            <template v-if="trace.detail"> · {{ trace.detail }}</template>
+                          </div>
+                        </li>
+                      </ol>
+                    </details>
+                  </div>
+                </div>
+              </div>
+              <p v-else class="mt-2 text-sm text-slate-500">未记录到身份/角色。</p>
+            </section>
+
+            <section class="mt-6">
+              <h4 class="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                关系解释（{{ relations.length }}）
+              </h4>
+              <div v-if="relations.length" class="mt-2 grid gap-2 sm:grid-cols-2">
+                <div
+                  v-for="relation in relations"
+                  :key="relation.name"
+                  class="rounded-lg border border-ink-600/50 bg-ink-900/30 px-3 py-2"
+                  :title="`共同出场 ${relation.weight} 章`"
+                >
+                  <div class="text-sm text-slate-200">
+                    {{ target.title }}（{{ relation.self_role || "—" }}）
+                    <span class="mx-1 text-slate-500">·</span>
+                    {{ relation.name }}（{{ relation.other_role || "—" }}）
+                  </div>
+                  <div class="mt-1 text-[11px] text-slate-500">
+                    共同出场 {{ relation.weight }} 章 · 第 {{ relation.first_chapter + 1 }}–{{ relation.last_chapter + 1 }} 章
+                  </div>
+                </div>
+              </div>
+              <p v-else class="mt-2 text-sm text-slate-500">暂无关系记录。</p>
+            </section>
           </template>
 
           <template v-else>

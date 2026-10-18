@@ -7,7 +7,7 @@ import { chapterHeading } from "@/utils/chapter";
 import { computeImportance, importanceLabel } from "@/utils/people";
 import { altWheelToHorizontal } from "@/utils/scroll";
 import { cleanPlace, cleanWorld } from "@/utils/space";
-import type { ChapterRow, DetailTarget, EntityEventRow, EntityRow } from "@/types/schema";
+import type { ChapterRow, DetailRole, DetailTarget, EntityEventRow, EntityRow } from "@/types/schema";
 
 const library = useLibraryStore();
 const query = ref("");
@@ -74,7 +74,87 @@ const roleByChar = computed(() => {
   return result;
 });
 
-/// 关系 = 同一章节共同出场；权重为共现章节数。
+/// 每个角色第一次出现、最近出现、地点与完整轨迹。
+const roleByChapterChar = computed(() => {
+  const m = new Map<string, Map<string, number>>();
+  for (const ev of events.value) {
+    if (!ev.role) continue;
+    const key = `${ev.chapter_index}|${ev.entity_id}`;
+    let counts = m.get(key);
+    if (!counts) {
+      counts = new Map();
+      m.set(key, counts);
+    }
+    counts.set(ev.role, (counts.get(ev.role) ?? 0) + 1);
+  }
+  return m;
+});
+
+const LEVEL_UP_RE = /晋升|升为|成为|接任|晋级|提升|升级|promoted|appointed/i;
+
+const rolesByChar = computed(() => {
+  const result = new Map<number, DetailRole[]>();
+  const byChar = new Map<number, Map<string, EntityEventRow[]>>();
+  for (const ev of events.value) {
+    if (!ev.role || !characterIds.value.has(ev.entity_id)) continue;
+    let roles = byChar.get(ev.entity_id);
+    if (!roles) {
+      roles = new Map();
+      byChar.set(ev.entity_id, roles);
+    }
+    const list = roles.get(ev.role) ?? [];
+    list.push(ev);
+    roles.set(ev.role, list);
+  }
+  for (const [entityId, roleMap] of byChar) {
+    const roles: DetailRole[] = [...roleMap.entries()]
+      .map(([name, evs]) => {
+        evs.sort((a, b) => a.chapter_index - b.chapter_index || a.id - b.id);
+        const first = evs[0];
+        const last = evs[evs.length - 1];
+        const firstChapter = chapterByIndex.value.get(first.chapter_index) ?? null;
+        const levelUp = evs.some((ev) =>
+          LEVEL_UP_RE.test(`${ev.role ?? ""} ${ev.impact_detail ?? ""}`),
+        );
+        return {
+          name,
+          first_chapter: first.chapter_index,
+          first_chapter_title: firstChapter ? chapterHeading(firstChapter, book.value?.title) : "",
+          first_place: firstChapter
+            ? [cleanWorld(firstChapter.world), cleanPlace(firstChapter.region), cleanPlace(firstChapter.site)]
+                .filter(Boolean)
+                .join(" · ")
+            : "",
+          last_chapter: last.chapter_index,
+          count: evs.length,
+          level_up: levelUp,
+          trace: evs.map((ev) => {
+            const chapter = chapterByIndex.value.get(ev.chapter_index) ?? null;
+            return {
+              chapter_index: ev.chapter_index,
+              chapter_title: chapter ? chapterHeading(chapter, book.value?.title) : "",
+              place: chapter
+                ? [cleanWorld(chapter.world), cleanPlace(chapter.region), cleanPlace(chapter.site)]
+                    .filter(Boolean)
+                    .join(" · ")
+                : "",
+              action: ev.action_type,
+              detail: ev.impact_detail,
+            };
+          }),
+        };
+      })
+      .sort((a, b) => a.first_chapter - b.first_chapter || b.count - a.count);
+    // 身份顺序变化时标记为升级/变化，便于画出身份演进线。
+    roles.forEach((role, index) => {
+      if (index > 0) role.level_up = true;
+    });
+    result.set(entityId, roles);
+  }
+  return result;
+});
+
+/// 关系 = 同一章节共同出场；权重为共现章节数，并记录双方在该章的身份。
 const relationsByChar = computed(() => {
   const byChapter = new Map<number, Set<number>>();
   for (const ev of events.value) {
@@ -87,22 +167,53 @@ const relationsByChar = computed(() => {
     set.add(ev.entity_id);
   }
 
+  const topRole = (counts?: Map<string, number>) => {
+    const best = [...(counts?.entries() ?? [])].sort((a, b) => b[1] - a[1])[0];
+    return best?.[0] ?? null;
+  };
+  const bump = (counts: Map<string, number>, role: string | null | undefined) => {
+    if (role) counts.set(role, (counts.get(role) ?? 0) + 1);
+  };
+
   const weights = new Map<
     string,
-    { a: number; b: number; weight: number; first: number; last: number }
+    {
+      a: number;
+      b: number;
+      weight: number;
+      first: number;
+      last: number;
+      aRoles: Map<string, number>;
+      bRoles: Map<string, number>;
+    }
   >();
   for (const [chapter, ids] of byChapter) {
     const list = [...ids].sort((a, b) => a - b);
     for (let i = 0; i < list.length; i++) {
       for (let j = i + 1; j < list.length; j++) {
         const key = `${list[i]}|${list[j]}`;
+        const aRole = topRole(roleByChapterChar.value.get(`${chapter}|${list[i]}`));
+        const bRole = topRole(roleByChapterChar.value.get(`${chapter}|${list[j]}`));
         const found = weights.get(key);
         if (found) {
           found.weight += 1;
           found.first = Math.min(found.first, chapter);
           found.last = Math.max(found.last, chapter);
+          bump(found.aRoles, aRole);
+          bump(found.bRoles, bRole);
         } else {
-          weights.set(key, { a: list[i], b: list[j], weight: 1, first: chapter, last: chapter });
+          weights.set(key, {
+            a: list[i],
+            b: list[j],
+            weight: 1,
+            first: chapter,
+            last: chapter,
+            aRoles: new Map(),
+            bRoles: new Map(),
+          });
+          const created = weights.get(key)!;
+          bump(created.aRoles, aRole);
+          bump(created.bRoles, bRole);
         }
       }
     }
@@ -111,7 +222,15 @@ const relationsByChar = computed(() => {
   const nameById = new Map(characters.value.map((c) => [c.id, c.name]));
   const result = new Map<
     number,
-    { id: number; name: string; weight: number; first: number; last: number }[]
+    {
+      id: number;
+      name: string;
+      weight: number;
+      first: number;
+      last: number;
+      selfRole: string | null;
+      otherRole: string | null;
+    }[]
   >();
   const ensure = (id: number) => {
     let list = result.get(id);
@@ -125,8 +244,24 @@ const relationsByChar = computed(() => {
     const an = nameById.get(w.a);
     const bn = nameById.get(w.b);
     if (!an || !bn) continue;
-    ensure(w.a).push({ id: w.b, name: bn, weight: w.weight, first: w.first, last: w.last });
-    ensure(w.b).push({ id: w.a, name: an, weight: w.weight, first: w.first, last: w.last });
+    ensure(w.a).push({
+      id: w.b,
+      name: bn,
+      weight: w.weight,
+      first: w.first,
+      last: w.last,
+      selfRole: topRole(w.aRoles),
+      otherRole: topRole(w.bRoles),
+    });
+    ensure(w.b).push({
+      id: w.a,
+      name: an,
+      weight: w.weight,
+      first: w.first,
+      last: w.last,
+      selfRole: topRole(w.bRoles),
+      otherRole: topRole(w.aRoles),
+    });
   }
   for (const list of result.values()) list.sort((a, b) => b.weight - a.weight || a.name.localeCompare(b.name));
   return result;
@@ -164,6 +299,8 @@ interface PersonRow {
     weight: number;
     first: number;
     last: number;
+    selfRole: string | null;
+    otherRole: string | null;
   }[];
 }
 
@@ -316,6 +453,8 @@ function openDetail(row: PersonRow) {
       detail: event.impact_detail,
     };
   });
+  const roles = rolesByChar.value.get(row.entity.id) ?? [];
+  const roleNames = roles.map((role) => role.name);
   detail.value = {
     kind: "character",
     key: row.entity.name,
@@ -324,7 +463,7 @@ function openDetail(row: PersonRow) {
     icon: "fa-user",
     metadata: [
       { label: "简介", value: row.entity.description || "" },
-      { label: "身份 / 关系", value: row.role || "" },
+      { label: "身份 / 关系", value: roleNames.join("、") },
       { label: "重要度", value: `${row.importance}/5 · ${importanceLabel(row.importance)}` },
       {
         label: "首次出场",
@@ -342,6 +481,15 @@ function openDetail(row: PersonRow) {
       { label: "主要活动地", value: row.topPlaces.map((p) => p.name).join("、") },
       { label: "关系", value: row.relations.map((rel) => rel.name).join("、") },
     ],
+    roles,
+    relations: row.relations.map((rel) => ({
+      name: rel.name,
+      self_role: rel.selfRole,
+      other_role: rel.otherRole,
+      weight: rel.weight,
+      first_chapter: rel.first,
+      last_chapter: rel.last,
+    })),
     events,
   };
 }
@@ -502,7 +650,7 @@ function openDetail(row: PersonRow) {
                       v-for="rel in row.relations.slice(0, 6)"
                       :key="rel.id"
                       class="rounded-full border border-jade-500/30 bg-jade-500/5 px-2 py-0.5 text-[10px] text-jade-300 transition hover:border-jade-400 hover:bg-jade-500/15"
-                      :title="`与 ${rel.name} 共同出场 ${rel.weight} 章（第 ${rel.first + 1}–${rel.last + 1} 章）`"
+                      :title="`与 ${rel.name} 共同出场 ${rel.weight} 章（第 ${rel.first + 1}–${rel.last + 1} 章） · 我：${rel.selfRole || '—'} / 对方：${rel.otherRole || '—'}`"
                       @click="query = rel.name"
                     >
                       {{ rel.name }}<span class="ml-0.5 text-slate-500">{{ rel.weight }}</span>

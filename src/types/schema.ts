@@ -97,6 +97,34 @@ export interface DetailEvent {
   detail?: string | null;
 }
 
+export interface DetailRoleTrace {
+  chapter_index: number;
+  chapter_title: string;
+  place?: string | null;
+  action?: string | null;
+  detail?: string | null;
+}
+
+export interface DetailRole {
+  name: string;
+  first_chapter: number;
+  first_chapter_title: string;
+  first_place?: string | null;
+  last_chapter: number;
+  count: number;
+  level_up: boolean;
+  trace: DetailRoleTrace[];
+}
+
+export interface DetailRelation {
+  name: string;
+  self_role?: string | null;
+  other_role?: string | null;
+  weight: number;
+  first_chapter: number;
+  last_chapter: number;
+}
+
 export interface DetailTarget {
   kind: "character" | "item" | "skill" | "legacy" | "space";
   key: string;
@@ -105,6 +133,8 @@ export interface DetailTarget {
   icon?: string;
   metadata: { label: string; value: string }[];
   events: DetailEvent[];
+  roles?: DetailRole[];
+  relations?: DetailRelation[];
 }
 
 export interface ChapterRow {
