@@ -50,5 +50,7 @@ export const api = {
   generateBookSummary: (bookId: number, config: LlmConfig) =>
     guard(() => invoke<string>("generate_book_summary", { bookId, config })),
   readTextFile: (path: string) => guard(() => invoke<string>("read_text_file", { path })),
+  writeTextFile: (path: string, content: string) =>
+    guard(() => invoke<void>("write_text_file", { path, content })),
   getDataDir: () => guard(() => invoke<string>("get_data_dir")),
 };

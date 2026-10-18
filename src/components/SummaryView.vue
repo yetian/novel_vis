@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import { save } from "@tauri-apps/plugin-dialog";
-import { writeTextFile } from "@tauri-apps/plugin-fs";
 import { api, isTauri } from "@/api/tauri";
+import { summaryCsv, summaryJson } from "@/exporter/summary";
 import { useLibraryStore } from "@/stores/library";
 import { useLlmStore } from "@/stores/llm";
 import { useUiStore } from "@/stores/ui";
@@ -238,47 +238,28 @@ async function generateSummary() {
   }
 }
 
-function summaryPayload() {
-  return {
-    book_id: book.value?.id ?? null,
-    title: book.value?.title ?? "",
-    author: book.value?.author ?? null,
-    summary: bookSummary.value,
-  };
-}
-
-function csvCell(value: unknown): string {
-  const text = value == null ? "" : String(value);
-  return /[;"\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
-}
-
-function summaryCsv(): string {
-  const payload = summaryPayload();
-  const header = ["book_id", "title", "author", "summary"].join(";");
-  const row = [payload.book_id, payload.title, payload.author, payload.summary]
-    .map(csvCell)
-    .join(";");
-  return `\uFEFF${header}\r\n${row}\r\n`;
-}
-
 async function exportSummary(format: "json" | "csv") {
-  if (!bookSummary.value) return;
+  if (!book.value || !bookSummary.value) return;
   if (!isTauri) {
     ui.toast("导出功能需要在桌面端中使用", "error");
     return;
   }
   try {
-    const title = (book.value?.title || "book")
-      .replace(/[\\/:*?"<>|]+/g, "_")
-      .slice(0, 80);
+    const title = book.value.title.replace(/[\\/:*?"<>|]+/g, "_").slice(0, 80) || "book";
     const target = await save({
       defaultPath: `${title}-全书总览.${format}`,
       filters: [{ name: format === "json" ? "JSON" : "CSV", extensions: [format] }],
     });
     if (!target) return;
-    const content =
-      format === "json" ? JSON.stringify(summaryPayload(), null, 2) : summaryCsv();
-    await writeTextFile(target as string, content);
+    const input = {
+      book: book.value,
+      summary: bookSummary.value,
+      chapters: chapters.value,
+      entities: entities.value,
+      events: events.value,
+    };
+    const content = format === "json" ? summaryJson(input) : summaryCsv(input);
+    await api.writeTextFile(target as string, content);
     ui.toast(`已导出 ${format.toUpperCase()} 文件`, "success");
   } catch (e) {
     ui.toast(`导出失败：${errText(e)}`, "error");

@@ -1,6 +1,6 @@
 # ChronoSpace Reader · 架构设计蓝图（design.md）
 
-> 当前版本：**v0.1.37**
+> 当前版本：**v0.1.38**
 > 本文档描述系统架构、数据流、SQLite 关系模式、状态机、协议契约与 UI 组件层级，并与代码库保持同步。
 
 ---
@@ -122,7 +122,10 @@ sequenceDiagram
 
 ### 3.3 导出（Export）
 
-前端读取 `timeline_bundle` → `exporter/staticHtml.ts` 生成内联 JSON 的单页 HTML → `plugin-dialog.save` + `plugin-fs.writeTextFile` 落盘。
+- **HTML**：前端读取 `timeline_bundle` → `exporter/staticHtml.ts` 生成内联 JSON 的单页 HTML。
+- **总览 JSON**：`exporter/summary.ts` 汇总全书总览、逐章摘要、章节时间/空间、本章人物、人物、地点、物品与事件。
+- **总览 CSV**：仅导出章节行（分号分隔、UTF-8 BOM、自动转义），包含时间/空间与本章人物列。
+- 三种格式均由 `plugin-dialog.save` 选择路径，再调用 Rust `write_text_file` 落盘，避免前端 fs 插件的路径权限限制。
 
 ---
 
@@ -323,6 +326,7 @@ sequenceDiagram
 | `generate_book_summary` | `bookId: number, config: LlmConfig` | `string` | 为已有抽取数据手动生成/刷新全书总览 |
 | `pause_extraction` / `resume_extraction` / `cancel_extraction` | `bookId: number` | `void` | 任务控制 |
 | `read_text_file` | `path: string` | `string` | 辅助读取 |
+| `write_text_file` | `path: string, content: string` | `void` | 导出写入（HTML / JSON / CSV），Rust 侧直接落盘 |
 
 > Tauri v2 自动将 JS 侧 `camelCase` 参数映射为 Rust `snake_case`。
 

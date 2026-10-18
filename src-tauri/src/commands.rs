@@ -406,3 +406,14 @@ pub async fn read_text_file(path: String) -> AppResult<String> {
         .await
         .map_err(AppError::from)?)
 }
+
+/// 导出文本文件。走 Rust 侧写入，避免前端 fs 插件对任意保存路径的权限限制。
+#[tauri::command]
+pub async fn write_text_file(path: String, content: String) -> AppResult<()> {
+    if path.trim().is_empty() {
+        return Err(AppError::Internal("导出路径为空".into()));
+    }
+    tokio::fs::write(&path, content.as_bytes())
+        .await
+        .map_err(AppError::from)
+}

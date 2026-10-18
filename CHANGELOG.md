@@ -3,6 +3,13 @@
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/) 与 [Conventional Commits](https://www.conventionalcommits.org/zh-hans/)。
 每个有意义的功能实现或修复均递增 PATCH 版本。
 
+## [0.1.38] - feat(export)
+
+- 修复导出无写文件权限：新增 Rust 侧 `write_text_file` 命令，HTML / JSON / CSV 导出不再受前端 fs 插件路径权限限制。
+- JSON 导出扩展为完整总览：全书总览、逐章摘要、章节时间/空间、本章主要人物与首现人物、人物、地点、物品和事件。
+- CSV 改为仅导出章节行，包含时间、空间、主要人物与首现人物等列，继续使用分号分隔。
+- 导出文件路径由保存对话框选择，写入失败会返回明确的 IO 错误。
+
 ## [0.1.37] - feat(export)
 
 - 全书总览新增 JSON 导出（`book_id` / `title` / `author` / `summary`）。

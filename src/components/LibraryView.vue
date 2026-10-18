@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { open, save } from "@tauri-apps/plugin-dialog";
-import { writeTextFile } from "@tauri-apps/plugin-fs";
 import { useLibraryStore } from "@/stores/library";
 import { useUiStore } from "@/stores/ui";
 import { useExtractionStore } from "@/stores/extraction";
@@ -51,7 +50,7 @@ async function exportHtml(bookId: number) {
       filters: [{ name: "HTML", extensions: ["html"] }],
     });
     if (!target) return;
-    await writeTextFile(target as string, buildStaticHtml(timeline));
+    await api.writeTextFile(target as string, buildStaticHtml(timeline));
     ui.toast("已导出可交互单页 HTML", "success");
   } catch (e) {
     ui.toast(`导出失败：${errText(e)}`, "error");

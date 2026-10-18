@@ -48,6 +48,7 @@ pub fn run() {
             commands::resume_extraction,
             commands::cancel_extraction,
             commands::read_text_file,
+            commands::write_text_file,
             commands::get_data_dir,
         ])
         .run(tauri::generate_context!())
