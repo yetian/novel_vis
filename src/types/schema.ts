@@ -26,11 +26,19 @@ export interface IngestResult {
   total_chapters: number;
 }
 
+export interface BookSubchapter {
+  title: string;
+  start_index: number;
+  end_index: number;
+  depth: number;
+}
+
 export interface BookCandidate {
   title: string;
   start_index: number;
   end_index: number;
   chapter_count: number;
+  subchapters: BookSubchapter[];
 }
 
 export interface BookInspection {

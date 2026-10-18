@@ -59,11 +59,11 @@ export const useLibraryStore = defineStore("library", {
         this.ingesting = false;
       }
     },
-    async doIngest(path: string, splitIntoBooks: boolean) {
+    async doIngest(path: string, splitIntoBooks: boolean, candidateIndices?: number[]) {
       const ui = useUiStore();
       this.ingesting = true;
       try {
-        const results = await api.ingestBook(path, splitIntoBooks);
+        const results = await api.ingestBook(path, splitIntoBooks, candidateIndices);
         if (results.length === 1) {
           ui.toast(`已导入《${results[0].title}》，共 ${results[0].total_chapters} 章`, "success");
         } else {
@@ -80,9 +80,9 @@ export const useLibraryStore = defineStore("library", {
         this.ingesting = false;
       }
     },
-    async confirmPending(splitIntoBooks: boolean) {
+    async confirmPending(splitIntoBooks: boolean, candidateIndices?: number[]) {
       if (!this.pending) return;
-      await this.doIngest(this.pending.path, splitIntoBooks);
+      await this.doIngest(this.pending.path, splitIntoBooks, candidateIndices);
     },
     cancelPending() {
       this.pending = null;

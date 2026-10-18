@@ -3,6 +3,13 @@
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/) 与 [Conventional Commits](https://www.conventionalcommits.org/zh-hans/)。
 每个有意义的功能实现或修复均递增 PATCH 版本。
 
+## [0.1.33] - feat(import)
+
+- 合订本导入支持勾选主章节：可全选或只导入其中几本，未勾选的主章节不会入库。
+- 目录候选新增子章节明细（标题、区间、层级），导入后主章节范围内的子章节自动成为该书的章节。
+- `ingest_book` 新增 `candidateIndices` 参数；部分选择使用 `split_book_selected`，全选仍保留未归类章节的「其他」书。
+- 导入对话框展示已选书籍/章节/子章节统计与可展开的子章节列表。
+
 ## [0.1.32] - style(summary)
 
 - 已有全书总览时，重新生成按钮改为悬停/键盘聚焦才显示的角落图标，默认视图只保留摘要正文。

@@ -24,8 +24,10 @@ function guard<T>(fn: () => Promise<T>): Promise<T> {
 
 export const api = {
   inspectBook: (path: string) => guard(() => invoke<BookInspection>("inspect_book", { path })),
-  ingestBook: (path: string, splitIntoBooks = false) =>
-    guard(() => invoke<IngestResult[]>("ingest_book", { path, splitIntoBooks })),
+  ingestBook: (path: string, splitIntoBooks = false, candidateIndices?: number[]) =>
+    guard(() =>
+      invoke<IngestResult[]>("ingest_book", { path, splitIntoBooks, candidateIndices }),
+    ),
   listBooks: () => guard(() => invoke<BookRow[]>("list_books")),
   getTimeline: (bookId: number) => guard(() => invoke<TimelineBundle>("get_timeline", { bookId })),
   deleteBook: (bookId: number) => guard(() => invoke<void>("delete_book", { bookId })),

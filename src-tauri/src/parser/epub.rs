@@ -1,6 +1,6 @@
 use super::util::{guess_title_with_book, hash_text, strip_html};
 use crate::error::{AppError, AppResult};
-use crate::models::{BookCandidate, ParsedBook, ParsedChapter};
+use crate::models::{BookCandidate, BookSubchapter, ParsedBook, ParsedChapter};
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::Reader;
 use std::collections::HashMap;
@@ -154,6 +154,7 @@ fn build_candidates(
             start_index: start,
             end_index: end,
             chapter_count: (end - start + 1) as usize,
+            subchapters: collect_subchapters(entry, base_dir, path_to_index),
         });
     }
     if out.len() >= 2 {
@@ -181,6 +182,46 @@ fn collect_indices(
     for child in &entry.children {
         collect_indices(child, base_dir, path_to_index, out);
     }
+}
+
+/// 收集主章节下的子章节；保留目录深度，供导入前预览。
+fn collect_subchapters(
+    entry: &NavEntry,
+    base_dir: &str,
+    path_to_index: &HashMap<String, i64>,
+) -> Vec<BookSubchapter> {
+    fn walk(
+        parent: &NavEntry,
+        base_dir: &str,
+        path_to_index: &HashMap<String, i64>,
+        depth: usize,
+        out: &mut Vec<BookSubchapter>,
+    ) {
+        for child in &parent.children {
+            let mut indices = Vec::new();
+            collect_indices(child, base_dir, path_to_index, &mut indices);
+            indices.sort_unstable();
+            indices.dedup();
+            if let (Some(start), Some(end)) = (indices.first(), indices.last()) {
+                let title = child.title.trim();
+                out.push(BookSubchapter {
+                    title: if title.is_empty() {
+                        format!("子章节 {}", out.len() + 1)
+                    } else {
+                        title.to_string()
+                    },
+                    start_index: *start,
+                    end_index: *end,
+                    depth,
+                });
+            }
+            walk(child, base_dir, path_to_index, depth + 1, out);
+        }
+    }
+
+    let mut out = Vec::new();
+    walk(entry, base_dir, path_to_index, 1, &mut out);
+    out
 }
 
 fn read_zip_entry<R: Read + std::io::Seek>(
@@ -709,6 +750,9 @@ mod tests {
         assert_eq!(book.candidates[0].title, "上卷 · 风起");
         assert_eq!(book.candidates[0].start_index, 0);
         assert_eq!(book.candidates[0].end_index, 1);
+        assert_eq!(book.candidates[0].subchapters.len(), 1);
+        assert_eq!(book.candidates[0].subchapters[0].title, "第二章");
+        assert_eq!(book.candidates[0].subchapters[0].depth, 1);
         assert_eq!(book.candidates[1].title, "下卷 · 云涌");
         assert_eq!(book.candidates[1].start_index, 2);
         assert_eq!(book.candidates[1].end_index, 3);

@@ -1,6 +1,6 @@
 # 时空编年史 · ChronoSpace Reader
 
-> 当前版本：**v0.1.32**
+> 当前版本：**v0.1.33**
 
 **ChronoSpace Reader（时空编年史）** 是一款跨平台桌面应用，使用 **Tauri 2.0（Rust）+ Vue 3（Vite / Pinia / TypeScript / TailwindCSS）** 构建。
 它把 EPUB / MOBI / AZW3 电子书**在内存中**解析分章，借助**本地大模型**（LM Studio 或 Ollama，OpenAI 兼容 API）抽取**时间、空间、人物、物品/功法与因果**结构，持久化到本地 SQLite，并以**交互式时空图谱**呈现，一键导出可部署到 GitHub Pages 的**零依赖单页 HTML**。
@@ -12,7 +12,7 @@
 ## ✨ 功能特性
 
 - **内存电子书解析**：EPUB（ZIP + OPF spine 解析）、MOBI / AZW3（PalmDB + PalmDOC 解压）全流程内存处理，流式分块避免磁盘膨胀。
-- **合订本拆分**：解析 EPUB 目录（NCX / EPUB3 nav）顶级分组，自动探测「一个文件包含多本书」；导入前弹出确认对话框，由用户选择**作为多本分别导入**或**作为单本导入**（候选未覆盖的章节归入《书名 · 其他》）。
+- **合订本拆分**：解析 EPUB 目录（NCX / EPUB3 nav）识别**主章节与子章节**；导入前可勾选要导入的主章节，子章节会随主章节范围归入同一本书；也可选择**作为单本导入**。全选时目录未覆盖的章节归入《书名 · 其他》。
 - **中文友好**：面向中文小说设计。解析层支持 **UTF-8 / GBK / GB18030 / Big5**（含 BOM 检测与「把 GBK 误标为 windows-1252」的启发式纠正）；LLM 提示词要求所有自然语言字段输出**简体中文**，仅 JSON 键名与枚举值（如 `CONTINUOUS`、`ITEM`）保持英文；界面与导出页使用中文无衬线字体栈（Noto Sans SC / 苹方 / 微软雅黑）。
 - **本地大模型抽取**：
   - 双引擎支持：**LM Studio**（`http://localhost:1234/v1`）与 **Ollama**（`http://localhost:11434/v1`），亦可接入任意 OpenAI 兼容端点。
@@ -165,7 +165,7 @@ npm run tauri:build
 npm run test          # 等价于 npm run test:rust -> cargo test
 ```
 
-- **单元测试**（`#[cfg(test)]`，共 45 项）：`parser::util`（HTML 清洗/实体解码/哈希/标题推测）、`parser::encoding`（UTF-8 / GBK / BOM / XML 编码嗅探 / 中文可读性打分）、`parser::epub`（内存 ZIP 构造的端到端 EPUB 解析、NCX/EPUB3 nav 合订本探测、UTF-8 边界安全的标题抽取）、`parser::mobi`（PalmDOC 解压）、`parser::mod`（格式探测 + 合订本拆分与再索引）、`pipeline`（JSON 修复/重试/分块/视角归一化）、`db`（模式 + 持久化 + 级联删除 + 幂等）、`paths`（数据目录解析）。
+- **单元测试**（`#[cfg(test)]`，共 63 项）：`parser::util`（HTML 清洗/实体解码/哈希/标题推测）、`parser::encoding`（UTF-8 / GBK / BOM / XML 编码嗅探 / 中文可读性打分）、`parser::epub`（内存 ZIP 构造的端到端 EPUB 解析、NCX/EPUB3 nav 合订本与子章节探测、UTF-8 边界安全的标题抽取）、`parser::mobi`（PalmDOC 解压）、`parser::mod`（格式探测 + 合订本拆分/选中导入/再索引）、`pipeline`（JSON 修复/重试/分块/视角归一化）、`db`（模式 + 持久化 + 级联删除 + 幂等）、`paths`（数据目录解析）。
 - **集成测试**（`src-tauri/tests/pipeline_db_roundtrip.rs`）：通过公开 API 验证「LLM JSON → SQLite → 时空聚合查询」全链路。
 
 前端目前仅有类型检查（`npm run typecheck`）。

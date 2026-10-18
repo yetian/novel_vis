@@ -123,6 +123,17 @@ pub struct ParsedChapter {
     pub char_count: usize,
 }
 
+/// 合订本中的子章节（来自目录层级，用于导入前预览）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BookSubchapter {
+    pub title: String,
+    pub start_index: i64,
+    pub end_index: i64,
+    /// 目录层级，1 表示主章节的直接子级。
+    #[serde(default)]
+    pub depth: usize,
+}
+
 /// 单本电子书中可能包含的候选书目（用于合订本/合集的拆分确认）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BookCandidate {
@@ -130,6 +141,9 @@ pub struct BookCandidate {
     pub start_index: i64,
     pub end_index: i64,
     pub chapter_count: usize,
+    /// 该主章节下的子章节；导入后会落在同一本书内。
+    #[serde(default)]
+    pub subchapters: Vec<BookSubchapter>,
 }
 
 #[derive(Debug, Clone, Serialize)]

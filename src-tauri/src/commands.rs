@@ -16,7 +16,12 @@ pub async fn inspect_book(path: String) -> AppResult<BookInspection> {
     let suspected = book.candidates.len() >= 2;
     let mut signals = Vec::new();
     if suspected {
-        signals.push(format!("目录识别出 {} 个顶级分组", book.candidates.len()));
+        let sub_count: usize = book.candidates.iter().map(|c| c.subchapters.len()).sum();
+        signals.push(format!(
+            "目录识别出 {} 个主章节 / {} 个子章节",
+            book.candidates.len(),
+            sub_count
+        ));
     }
 
     Ok(BookInspection {
@@ -31,18 +36,34 @@ pub async fn inspect_book(path: String) -> AppResult<BookInspection> {
 }
 
 /// 导入电子书：读取文件到内存，解析分章，写入数据库并缓存原文。
-/// `split_into_books` 为真且探测到多个候选书目时，拆分为多本分别入库。
+/// `split_into_books` 为真时按选中的主章节拆分；`candidate_indices` 为空则使用全部候选。
 #[tauri::command]
 pub async fn ingest_book(
     state: State<'_, AppState>,
     path: String,
     split_into_books: Option<bool>,
+    candidate_indices: Option<Vec<usize>>,
 ) -> AppResult<Vec<IngestResult>> {
     let bytes = tokio::fs::read(&path).await?;
     let book = parser::parse_book(&path, &bytes)?;
 
-    let parts = if split_into_books.unwrap_or(false) && book.candidates.len() >= 2 {
-        parser::split_book(&book, &book.candidates)
+    let split = split_into_books.unwrap_or(false) && !book.candidates.is_empty();
+    let parts = if split {
+        let chosen: Vec<BookCandidate> = match &candidate_indices {
+            Some(indices) => indices
+                .iter()
+                .filter_map(|&i| book.candidates.get(i).cloned())
+                .collect(),
+            None => book.candidates.clone(),
+        };
+        if chosen.is_empty() {
+            return Err(AppError::Internal("请至少选择一个主章节".into()));
+        }
+        if chosen.len() == book.candidates.len() {
+            parser::split_book(&book, &chosen)
+        } else {
+            parser::split_book_selected(&book, &chosen)
+        }
     } else {
         vec![book]
     };
