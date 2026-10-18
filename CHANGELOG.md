@@ -3,6 +3,12 @@
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/) 与 [Conventional Commits](https://www.conventionalcommits.org/zh-hans/)。
 每个有意义的功能实现或修复均递增 PATCH 版本。
 
+## [0.1.28] - feat(llm)
+
+- 所有模型请求默认发送 `reasoning_effort: "none"`，关闭 LM Studio / Ollama 思考模型的推理输出，避免推理 token 挤占 JSON 与正文预算。
+- 引擎不支持该字段时自动去掉并重试；仍不支持 `response_format` 时继续降级为普通 JSON 提示。
+- 增加请求序列化测试，确认开启/关闭思考控制时字段正确出现或省略。
+
 ## [0.1.27] - refactor(prompts)
 
 - 重写抽取系统提示词：固定 8 字段模板、逐字段语义/枚举说明、数组元素格式和输出前检查清单，降低小模型漏字段与误用枚举的概率。

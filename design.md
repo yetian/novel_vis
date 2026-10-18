@@ -1,6 +1,6 @@
 # ChronoSpace Reader · 架构设计蓝图（design.md）
 
-> 当前版本：**v0.1.27**
+> 当前版本：**v0.1.28**
 > 本文档描述系统架构、数据流、SQLite 关系模式、状态机、协议契约与 UI 组件层级，并与代码库保持同步。
 
 ---
@@ -11,7 +11,7 @@
 | --- | --- |
 | 本地优先 | 全部计算（解析、抽取、可视化、导出）在本机完成，不联网上传 |
 | 内存解析 | 电子书原文仅驻留内存，结构化结果才落 SQLite，避免磁盘膨胀 |
-| 本地 LLM | 通过 OpenAI 兼容协议对接 LM Studio / Ollama，强制 JSON 输出 |
+| 本地 LLM | 通过 OpenAI 兼容协议对接 LM Studio / Ollama，强制 JSON 输出并默认关闭思考模式 |
 | 结构可靠 | 严格 JSON Schema + 本地修复 + 有限次重试，容忍小模型输出抖动 |
 | 可续跑 | 逐章事务检查点，支持暂停/继续/取消与断点续跑 |
 | 可视化 | 时间 × 空间矩阵（人物轨迹 + 关系连线）+ 双轴时间线 + 实体谱系 |
@@ -63,7 +63,7 @@ flowchart TB
 | --- | --- |
 | `parser/` | 格式探测、内存解析、分章、纯文本化（去标签、实体解码） |
 | `parser/encoding` | 中文友好解码：BOM 检测、可靠 Unicode 声明、候选（UTF-8 / GBK / windows-1252）可读性打分；纠正「GBK 字节被误标为 windows-1252」 |
-| `llm.rs` | OpenAI 兼容客户端：模型探测、`chat/completions`、JSON 模式 |
+| `llm.rs` | OpenAI 兼容客户端：模型探测、`chat/completions`、JSON 模式、思考模式关闭 |
 | `pipeline.rs` | 分块、提示词、调用、JSON 修复与重试、事务持久化、进度事件 |
 | `db.rs` | 迁移、CRUD、聚合查询（`timeline_bundle`） |
 | `state.rs` | `ParsedBook` 内存缓存、`JobControl`（暂停/取消）、LLM 配置 |
@@ -243,6 +243,8 @@ erDiagram
 5. 仍失败则携带解析错误、上一次输出与原始任务，用修复提示词让模型只修 JSON 语法、补全截断结构并保留原字段/值，次数 = `LlmConfig.max_retries`（默认 3）。
 
 **小模型提示词设计**：抽取系统提示词先给 8 个顶层字段的语义与枚举规则，再给固定键名模板，最后给输出前检查清单；用户提示词重复顶层字段列表与「只分析正文」边界，降低小模型漏字段、抄占位符和把元数据写进摘要的概率。全书总览提示词明确要求完整正文、禁止占位符，并在校验失败时切换为纯文本提示重试。
+
+**思考模式**：所有 chat 请求默认带 `reasoning_effort: "none"`，关闭 LM Studio / Ollama 中支持思考模型的推理输出，避免推理 token 挤占 JSON 输出预算。若引擎返回 400/404/422 表示不支持该字段，则去掉它重试；若仍因 `response_format` 失败，再降级为普通 JSON 提示。
 
 **视角归一化**：系统提示词要求判断 `first_person` / `third_person`；第一人称时把「我」解析为主角规范名，无法确定则使用 `PROTAGONIST_FIRST_PERSON` 并在 `description` 注明别名。
 
@@ -426,6 +428,7 @@ App.vue
 | 缺少逗号 | `MISSING_COMMA_RE` 在「值 + 下一个键」之间补逗号，修复 `expected , or }` |
 | 输出被截断 | `balance_braces` 依据未闭合括号补齐 `}` / `]` |
 | 推理模型空 content | 回退读取 `reasoning_content` / `reasoning` |
+| 引擎不支持 `reasoning_effort` | 去掉思考控制重试；再按需去掉 `response_format` |
 | 引擎不支持 `response_format` | 自动降级为不带该字段重试一次 |
 | 引擎不可达 | `LLM_ERROR`，提示启动本地服务 |
 | 抽取中断/取消 | 已完成章节的事务检查点保留，可续跑 |

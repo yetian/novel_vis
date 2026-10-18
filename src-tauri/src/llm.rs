@@ -21,6 +21,9 @@ struct ChatRequest<'a> {
     response_format: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     format: Option<&'a str>,
+    /// OpenAI/Ollama 兼容字段：推理模型传 "none" 可关闭思考。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning_effort: Option<&'a str>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -171,11 +174,22 @@ async fn ollama_list_models(
 }
 
 /// 调用 OpenAI 兼容的 chat/completions，强制 JSON 输出。
+/// 默认关闭推理模型的思考模式；若引擎不认识该字段则自动降级重试。
 pub async fn chat_json(
     config: &LlmConfig,
     system: &str,
     user: &str,
     json_mode: bool,
+) -> AppResult<String> {
+    chat_completion(config, system, user, json_mode, true).await
+}
+
+async fn chat_completion(
+    config: &LlmConfig,
+    system: &str,
+    user: &str,
+    json_mode: bool,
+    disable_thinking: bool,
 ) -> AppResult<String> {
     let client = build_client(config)?;
     let url = endpoint(&config.base_url, "chat/completions");
@@ -201,6 +215,7 @@ pub async fn chat_json(
             None
         },
         format: None,
+        reasoning_effort: disable_thinking.then_some("none"),
     };
 
     let resp = apply_auth(client.post(&url), config)
@@ -212,9 +227,20 @@ pub async fn chat_json(
     if !resp.status().is_success() {
         let status = resp.status();
         let body = resp.text().await.unwrap_or_default();
+        // 某些引擎不认识 reasoning_effort；去掉思考控制后重试一次。
+        if disable_thinking && matches!(status.as_u16(), 400 | 404 | 422) {
+            return Box::pin(chat_completion(config, system, user, json_mode, false)).await;
+        }
         // 某些引擎不支持 response_format，降级重试一次。
         if json_mode {
-            return Box::pin(chat_json(config, system, user, false)).await;
+            return Box::pin(chat_completion(
+                config,
+                system,
+                user,
+                false,
+                disable_thinking,
+            ))
+            .await;
         }
         return Err(AppError::Llm(format!(
             "LLM 返回错误 ({status}): {}",
@@ -473,6 +499,7 @@ pub async fn activate_model(config: &LlmConfig, previous: Option<&str>) -> AppRe
                 stream: false,
                 response_format: None,
                 format: None,
+                reasoning_effort: None,
             };
             let warmed = apply_auth(
                 client.post(&endpoint(&config.base_url, "chat/completions")),
@@ -498,5 +525,38 @@ fn truncate(s: &str, max: usize) -> String {
     } else {
         let t: String = s.chars().take(max).collect();
         format!("{t}…")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_request(reasoning_effort: Option<&str>) -> ChatRequest<'_> {
+        ChatRequest {
+            model: "test-model",
+            messages: vec![ChatMessage {
+                role: "user",
+                content: "hi",
+            }],
+            temperature: 0.0,
+            max_tokens: 16,
+            stream: false,
+            response_format: Some(json!({ "type": "json_object" })),
+            format: None,
+            reasoning_effort,
+        }
+    }
+
+    #[test]
+    fn reasoning_effort_is_sent_as_none() {
+        let value = serde_json::to_value(sample_request(Some("none"))).unwrap();
+        assert_eq!(value["reasoning_effort"], "none");
+    }
+
+    #[test]
+    fn reasoning_effort_is_omitted_when_disabled() {
+        let value = serde_json::to_value(sample_request(None)).unwrap();
+        assert!(value.get("reasoning_effort").is_none());
     }
 }
