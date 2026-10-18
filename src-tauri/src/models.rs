@@ -254,6 +254,16 @@ pub struct BiographyKey {
     pub target_key: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct BiographyProgress {
+    pub book_id: i64,
+    pub kind: String,
+    pub target_key: String,
+    pub current: usize,
+    pub total: usize,
+    pub message: String,
+}
+
 /// 画布聚合数据
 #[derive(Debug, Clone, Serialize)]
 pub struct TimelineBundle {

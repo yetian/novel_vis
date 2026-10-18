@@ -13,6 +13,7 @@ use tauri::{AppHandle, Emitter};
 
 pub const EVENT_PROGRESS: &str = "extraction://progress";
 pub const EVENT_LOG: &str = "extraction://log";
+pub const EVENT_BIOGRAPHY_PROGRESS: &str = "biography://progress";
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ExtractionRequest {
@@ -213,7 +214,7 @@ pub async fn run_extraction(
     Ok(results)
 }
 
-const BOOK_SUMMARY_SYSTEM: &str = r#"你是中文小说编辑。只输出一个 JSON 对象，只含 summary 字段。只依据材料，不编造；简体中文；summary 只写正文，不含标题、书名/作者、分点或占位符。严格遵守用户给出的字数上限，超出会被截断。"#;
+const BOOK_SUMMARY_SYSTEM: &str = r#"你是中文小说编辑。直接输出总览正文，不要标题、书名/作者、分点、解释、Markdown 或占位符。只依据材料，不编造；简体中文；综合信息写成连贯段落。严格遵守用户给出的字数上限，超出会被截断。"#;
 
 /// 用章节摘要生成全书总览。章节很多时先分批生成阶段摘要，再汇总最终总览。
 pub async fn summarize_book(
@@ -287,7 +288,7 @@ pub async fn summarize_book(
                 0,
             );
             let prompt = format!(
-                "《{}》第 {}/{} 组摘要。用 180-240 字概括本阶段剧情、人物与地点，严格不超过 240 字，超出会截断；不提前后续，不分点。只输出 JSON，summary 为完整正文。\n\n{}",
+                "《{}》第 {}/{} 组摘要。用 180-240 字概括本阶段剧情、人物与地点，严格不超过 240 字，超出会截断；不提前后续，不分点。直接输出一段连续正文。\n\n{}",
                 title,
                 i + 1,
                 batches.len(),
@@ -314,14 +315,31 @@ pub async fn summarize_book(
         .filter(|a| !a.is_empty())
         .map(|a| format!("作者：{a}"))
         .unwrap_or_default();
-    let material = parts.join("\n\n");
+    let mut material_parts = parts;
+    let mut condense_rounds = 0;
+    while material_parts.join("\n\n").chars().count() > 6_000 && condense_rounds < 2 {
+        let groups = pack_summary_lines(&material_parts, 5_000);
+        if groups.len() >= material_parts.len() {
+            break;
+        }
+        let mut next = Vec::with_capacity(groups.len());
+        for group in groups {
+            let prompt = format!(
+                "以下是全书阶段摘要节选。用 200-300 字综合成高层梗概，只保留主线、关键人物与转折，不逐章罗列。严格不超过 300 字，超出会截断。直接输出正文。\n\n{group}"
+            );
+            next.push(call_summary(config, &prompt, 300).await?);
+        }
+        material_parts = next;
+        condense_rounds += 1;
+    }
+    let material = material_parts.join("\n\n");
     let scope = if staged {
         "以下是全书各阶段的摘要"
     } else {
         "以下是全书的章节摘要"
     };
     let prompt = format!(
-        "《{title}》{author_line}\n{scope}。写 300-450 字全书总览，严格不超过 450 字，超出会截断：核心设定/世界/主线、开端—发展—转折—结局、3-8 位关键人物；只依据材料，不编造，不分点。summary 只写正文，无标题、书名/作者或占位符。只输出 JSON，summary 只写正文。\n\n{}",
+        "《{title}》{author_line}\n{scope}。请综合这些材料写 300-450 字全书总览，严格不超过 450 字，超出会截断；不要逐章复述。内容包含核心设定/世界/主线、开端—发展—转折—结局、3-8 位关键人物。只依据材料，不编造，不分点。直接输出正文，无标题、书名/作者或占位符。\n\n{}",
         material
     );
     emit_progress(
@@ -359,10 +377,12 @@ pub async fn summarize_book(
     Ok(Some(summary))
 }
 
-const BIO_SYSTEM: &str = r#"你是中文小说资料编辑。只输出一个 JSON 对象，只含 biography 字段。根据资料写传记，最多 1800 字，严格不超过上限；只写资料中的事实，不编造；简体中文；按时间顺序写成连贯段落，不要标题、分点、前言或占位符。"#;
+const BIO_SYSTEM: &str = r#"你是中文小说资料编辑。根据高层资料写传记，最多 1800 字，严格不超过上限；按时间顺序写成连贯段落；只写资料中的事实，不编造；简体中文；不要标题、分点、前言或占位符。"#;
+const DOSSIER_SYSTEM: &str = r#"你是中文小说资料编辑。直接输出资料梗概，不写传记；只依据资料，不编造；简体中文；不分点、不写标题；严格遵守字数上限。"#;
 
 /// 按需生成人物 / 地点 / 物品传记。返回 (标题, 正文)。
 pub async fn generate_biography(
+    app: &AppHandle,
     config: &LlmConfig,
     book_id: i64,
     kind: &str,
@@ -495,24 +515,104 @@ pub async fn generate_biography(
     if lines.is_empty() {
         return Err(AppError::Internal("没有足够资料生成传记".into()));
     }
-    let material = truncate(&lines.join("\n"), 7_000);
-    let prompt = format!(
-        "为{kind_label}《{title}》写一篇传记，尽量 1200-1800 字，严格不超过 1800 字（超出会截断）。按时间顺序叙述其经历、变化与关系；只依据下面资料，不编造，不写标题或分点。只输出 JSON，biography 为完整正文。\n\n{material}"
+
+    // 先按章节资料生成高层梗概，再据梗概写传记，避免直接逐章拼接。
+    let batches = pack_summary_lines(&lines, 3_500);
+    let total_steps = batches.len() + 1;
+    emit_biography_progress(
+        app,
+        book_id,
+        &kind,
+        target_key,
+        0,
+        total_steps,
+        "正在整理资料…",
     );
+    let mut dossiers = Vec::with_capacity(batches.len());
+    for (i, batch) in batches.iter().enumerate() {
+        emit_biography_progress(
+            app,
+            book_id,
+            &kind,
+            target_key,
+            i,
+            total_steps,
+            &format!("正在整理资料 {}/{}…", i + 1, batches.len()),
+        );
+        let prompt = format!(
+            "把以下{kind_label}资料综合成 220-320 字高层梗概，保留阶段、关系变化、关键地点/物品与转折，不逐章罗列。严格不超过 320 字，超出会截断。只输出梗概正文。\n\n{batch}"
+        );
+        dossiers.push(call_plain(config, DOSSIER_SYSTEM, &prompt, 320).await?);
+        emit_biography_progress(
+            app,
+            book_id,
+            &kind,
+            target_key,
+            i + 1,
+            total_steps,
+            &format!("资料整理 {}/{} 完成", i + 1, batches.len()),
+        );
+    }
+
+    let mut material = dossiers.join("\n\n");
+    let mut rounds = 0;
+    while material.chars().count() > 4_000 && rounds < 2 {
+        let groups = pack_summary_lines(&dossiers, 3_000);
+        if groups.len() >= dossiers.len() {
+            break;
+        }
+        let mut next = Vec::with_capacity(groups.len());
+        for group in groups {
+            let prompt = format!(
+                "把以下高层梗概再综合成 250-350 字，保留主线、人物关系与关键转折，不逐章罗列。严格不超过 350 字。只输出正文。\n\n{group}"
+            );
+            next.push(call_plain(config, DOSSIER_SYSTEM, &prompt, 350).await?);
+        }
+        dossiers = next;
+        material = dossiers.join("\n\n");
+        rounds += 1;
+    }
+
+    emit_biography_progress(
+        app,
+        book_id,
+        &kind,
+        target_key,
+        total_steps.saturating_sub(1),
+        total_steps,
+        "正在撰写传记…",
+    );
+    let prompt = format!(
+        "根据以下高层资料，为{kind_label}《{title}》写一篇传记，尽量 1200-1800 字，严格不超过 1800 字（超出会截断）。按时间顺序综合叙述其经历、变化与关系，不要逐章罗列。只依据资料，不编造，不写标题或分点。直接输出正文。\n\n{material}"
+    );
+    let biography = call_plain(config, BIO_SYSTEM, &prompt, 1_800).await?;
+    emit_biography_progress(
+        app,
+        book_id,
+        &kind,
+        target_key,
+        total_steps,
+        total_steps,
+        "传记生成完成",
+    );
+    Ok((title, biography))
+}
+
+async fn call_plain(
+    config: &LlmConfig,
+    system: &str,
+    prompt: &str,
+    max_chars: usize,
+) -> AppResult<String> {
     let mut cfg = config.clone();
     cfg.max_tokens = cfg.max_tokens.max(4_096);
-    let raw = llm::chat_json(&cfg, BIO_SYSTEM, &prompt, true).await?;
-    let mut biography = parse_biography_output(&raw).unwrap_or_default();
-    if !biography_usable(&biography) {
-        let retry_system = "直接输出中文传记正文，只写正文；不要 JSON、标题、解释、分点或占位符。";
-        let retry_prompt = format!("{prompt}\n\n忽略上面的 JSON 要求，直接输出完整传记正文。");
-        let retry_raw = llm::chat_json(&cfg, retry_system, &retry_prompt, false).await?;
-        biography = parse_biography_output(&retry_raw).unwrap_or_default();
+    let raw = llm::chat_json(&cfg, system, prompt, false).await?;
+    let text = trim_to_sentence(&parse_biography_output(&raw).unwrap_or_default(), max_chars);
+    if biography_usable(&text) {
+        Ok(text)
+    } else {
+        Err(AppError::Llm("传记内容为空或无效".into()))
     }
-    if !biography_usable(&biography) {
-        return Err(AppError::Llm("传记内容为空或无效".into()));
-    }
-    Ok((title, trim_to_sentence(&biography, 1_800)))
 }
 
 fn biography_usable(text: &str) -> bool {
@@ -619,36 +719,17 @@ pub fn pack_summary_lines(lines: &[String], max_chars: usize) -> Vec<String> {
 async fn call_summary(config: &LlmConfig, prompt: &str, max_chars: usize) -> AppResult<String> {
     let mut cfg = config.clone();
     cfg.max_tokens = cfg.max_tokens.max(1_400);
-    let raw = llm::chat_json(&cfg, BOOK_SUMMARY_SYSTEM, prompt, true).await?;
-    if let Some(summary) = parse_summary_output(&raw) {
-        let summary = trim_to_sentence(&summary, max_chars);
-        if summary_is_usable(&summary) {
-            return Ok(summary);
-        }
-    }
-
-    // 小模型容易把提示里的占位符原样抄回来；改用纯文本再试一次。
-    let retry_system = "直接输出总览正文，只写正文；不要 JSON、标题、书名/作者、解释或占位符。";
-    let json_sentence = "只输出 JSON，summary 为完整正文。";
-    let json_sentence_long = "只输出 JSON，summary 只写正文。";
-    let plain_sentence = "直接输出总览正文：不要标题、书名/作者、JSON、解释或占位符。";
-    let mut retry_prompt = prompt
-        .replace(json_sentence, plain_sentence)
-        .replace(json_sentence_long, plain_sentence);
-    if retry_prompt == prompt {
-        retry_prompt = format!("{prompt}\n\n{plain_sentence}");
-    }
-    let retry_raw = llm::chat_json(&cfg, retry_system, &retry_prompt, false).await?;
-    let summary = parse_summary_output(&retry_raw)
+    let raw = llm::chat_json(&cfg, BOOK_SUMMARY_SYSTEM, prompt, false).await?;
+    let summary = parse_summary_output(&raw)
         .map(|text| trim_to_sentence(&text, max_chars))
         .unwrap_or_default();
     if summary_is_usable(&summary) {
         return Ok(summary);
     }
     Err(AppError::Llm(format!(
-        "全书总览内容无效（{} 字），模型可能只输出了占位符：{}",
+        "全书总览内容无效（{} 字）：{}",
         summary.chars().count(),
-        truncate(&retry_raw, 160)
+        truncate(&raw, 160)
     )))
 }
 
@@ -788,18 +869,81 @@ async fn extract_chapter(
                 }
             }
             Err(e) => {
-                chapter_ok = false;
-                first_error = Some(e.to_string());
-                emit_log(
-                    &app,
-                    book_id,
-                    &format!(
-                        "第 {} 章分块 {} 抽取失败: {}",
-                        chapter.chapter_index + 1,
-                        ci + 1,
-                        e
-                    ),
-                );
+                // 输出被截断时，把过长的分块拆成两段再抽一次，避免整块失败。
+                let mut recovered = false;
+                if let Some((left, right)) = split_text_in_half(chunk) {
+                    emit_log(
+                        &app,
+                        book_id,
+                        &format!(
+                            "第 {} 章分块 {} 抽取失败，拆分为两段重试: {}",
+                            chapter.chapter_index + 1,
+                            ci + 1,
+                            e
+                        ),
+                    );
+                    let mut merged: Option<SegmentExtraction> = None;
+                    let mut sub_retries = 0u32;
+                    let mut sub_ok = true;
+                    let mut sub_error = String::new();
+                    for part in [left, right] {
+                        match extract_chunk(
+                            &llm_config,
+                            &chapter,
+                            ci,
+                            chunk_total,
+                            part,
+                            &app,
+                            book_id,
+                        )
+                        .await
+                        {
+                            Ok((ext, used, was_repaired)) => {
+                                sub_retries += used;
+                                repaired |= was_repaired;
+                                merged = Some(match merged {
+                                    Some(current) => merge_extractions(current, ext),
+                                    None => ext,
+                                });
+                            }
+                            Err(e2) => {
+                                sub_ok = false;
+                                sub_error = e2.to_string();
+                            }
+                        }
+                    }
+                    if let Some(ext) = merged {
+                        retries_total += sub_retries;
+                        if first_ext.is_none() {
+                            first_ext = Some(ext.clone());
+                        }
+                        if let Err(e) = db.persist_extraction(book_id, chapter_id, &ext) {
+                            chapter_ok = false;
+                            first_error = Some(e.to_string());
+                        }
+                        if !sub_ok {
+                            chapter_ok = false;
+                            if first_error.is_none() {
+                                first_error = Some(sub_error);
+                            }
+                        }
+                        recovered = true;
+                    }
+                }
+                if !recovered {
+                    chapter_ok = false;
+                    first_error = Some(e.to_string());
+                    emit_log(
+                        &app,
+                        book_id,
+                        &format!(
+                            "第 {} 章分块 {} 抽取失败: {}",
+                            chapter.chapter_index + 1,
+                            ci + 1,
+                            e
+                        ),
+                    );
+                }
             }
         }
     }
@@ -904,6 +1048,79 @@ async fn extract_chunk(
         "模型输出无法修复（已重试 {} 次）: {}",
         retries, last_error
     )))
+}
+
+/// 把过长文本在靠近中点的换行处分成两段；过短不拆。
+fn split_text_in_half(text: &str) -> Option<(&str, &str)> {
+    let count = text.chars().count();
+    if count < 800 {
+        return None;
+    }
+    let mid_char = count / 2;
+    let mut seen = 0usize;
+    let mut mid_byte = text.len();
+    for (i, _) in text.char_indices() {
+        if seen == mid_char {
+            mid_byte = i;
+            break;
+        }
+        seen += 1;
+    }
+    let split = text[..mid_byte]
+        .rfind('\n')
+        .filter(|i| mid_byte.saturating_sub(*i) > 40)
+        .unwrap_or(mid_byte);
+    let left = text[..split].trim();
+    let right = text[split..].trim();
+    if left.chars().count() < 200 || right.chars().count() < 200 {
+        None
+    } else {
+        Some((left, right))
+    }
+}
+
+/// 合并拆分后的两段抽取结果；人物/物品按名称去重。
+fn merge_extractions(mut first: SegmentExtraction, second: SegmentExtraction) -> SegmentExtraction {
+    for character in second.characters {
+        if !first
+            .characters
+            .iter()
+            .any(|existing| existing.name == character.name)
+        {
+            first.characters.push(character);
+        }
+    }
+    for item in second.items_and_skills {
+        if !first
+            .items_and_skills
+            .iter()
+            .any(|existing| existing.name == item.name)
+        {
+            first.items_and_skills.push(item);
+        }
+    }
+    if first.plot_summary.trim().is_empty() {
+        first.plot_summary = second.plot_summary;
+    } else if !second.plot_summary.trim().is_empty() {
+        first.plot_summary = trim_to_sentence(
+            &format!(
+                "{}；{}",
+                first.plot_summary.trim(),
+                second.plot_summary.trim()
+            ),
+            50,
+        );
+    }
+    if first.temporal.is_none() {
+        first.temporal = second.temporal;
+    }
+    if first.spatial.is_none() {
+        first.spatial = second.spatial;
+    }
+    if first.narrative_perspective.is_none() {
+        first.narrative_perspective = second.narrative_perspective;
+    }
+    first
 }
 
 /// 从模型输出中解析出 SegmentExtraction，包含本地 JSON 修复策略。
@@ -1414,6 +1631,30 @@ fn emit_progress(
     .ok();
 }
 
+fn emit_biography_progress(
+    app: &AppHandle,
+    book_id: i64,
+    kind: &str,
+    target_key: &str,
+    current: usize,
+    total: usize,
+    message: &str,
+) {
+    Emitter::emit(
+        app,
+        EVENT_BIOGRAPHY_PROGRESS,
+        &BiographyProgress {
+            book_id,
+            kind: kind.to_string(),
+            target_key: target_key.to_string(),
+            current,
+            total,
+            message: message.to_string(),
+        },
+    )
+    .ok();
+}
+
 fn emit_log(app: &AppHandle, book_id: i64, message: &str) {
     Emitter::emit(
         app,
@@ -1823,5 +2064,31 @@ mod tests {
             trim_to_sentence("一二三四五六七八九十", 10),
             "一二三四五六七八九十"
         );
+    }
+
+    #[test]
+    fn split_and_merge_extractions_for_long_chunks() {
+        let text = format!("{}\n{}", "甲".repeat(500), "乙".repeat(500));
+        let (left, right) = split_text_in_half(&text).unwrap();
+        assert!(left.contains('甲'));
+        assert!(right.contains('乙'));
+
+        let first: SegmentExtraction = serde_json::from_value(json!({
+            "characters": [{"name": "韩立"}, {"name": "厉飞雨"}],
+            "items_and_skills": [{"name": "掌天瓶"}],
+            "plot_summary": "前半段"
+        }))
+        .unwrap();
+        let second: SegmentExtraction = serde_json::from_value(json!({
+            "characters": [{"name": "韩立"}, {"name": "墨大夫"}],
+            "items_and_skills": [{"name": "掌天瓶"}],
+            "plot_summary": "后半段"
+        }))
+        .unwrap();
+        let merged = merge_extractions(first, second);
+        assert_eq!(merged.characters.len(), 3);
+        assert_eq!(merged.items_and_skills.len(), 1);
+        assert!(merged.plot_summary.contains("前半段"));
+        assert!(merged.plot_summary.contains("后半段"));
     }
 }

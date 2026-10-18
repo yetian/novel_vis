@@ -76,6 +76,15 @@ export interface BiographyRow extends BiographyKey {
   updated_at: string;
 }
 
+export interface BiographyProgress {
+  book_id: number;
+  kind: string;
+  target_key: string;
+  current: number;
+  total: number;
+  message: string;
+}
+
 export interface DetailEvent {
   id: number;
   chapter_index: number;

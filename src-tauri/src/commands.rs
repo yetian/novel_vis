@@ -353,6 +353,7 @@ pub fn get_biography(
 
 #[tauri::command]
 pub async fn generate_biography(
+    app: AppHandle,
     state: State<'_, AppState>,
     book_id: i64,
     kind: String,
@@ -360,7 +361,7 @@ pub async fn generate_biography(
     config: LlmConfig,
 ) -> AppResult<BiographyRow> {
     let (title, content) =
-        pipeline::generate_biography(&config, book_id, &kind, &target_key, &state.db).await?;
+        pipeline::generate_biography(&app, &config, book_id, &kind, &target_key, &state.db).await?;
     state
         .db
         .upsert_biography(book_id, &kind, &target_key, &title, &content)

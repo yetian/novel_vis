@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
-import { api } from "@/api/tauri";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { api, isTauri } from "@/api/tauri";
 import { useLibraryStore } from "@/stores/library";
 import { useLlmStore } from "@/stores/llm";
 import { useUiStore } from "@/stores/ui";
 import { errText } from "@/utils/error";
-import type { BiographyRow, DetailTarget } from "@/types/schema";
+import type { BiographyProgress, BiographyRow, DetailTarget } from "@/types/schema";
 
 const props = defineProps<{
   open: boolean;
@@ -22,6 +23,26 @@ const tab = ref<"biography" | "metadata" | "timeline">("biography");
 const biography = ref<BiographyRow | null>(null);
 const loading = ref(false);
 const generating = ref(false);
+const bioProgress = ref<BiographyProgress | null>(null);
+let unlistenProgress: UnlistenFn | null = null;
+
+onMounted(async () => {
+  if (!isTauri) return;
+  unlistenProgress = await listen<BiographyProgress>("biography://progress", (event) => {
+    const payload = event.payload;
+    if (
+      props.bookId === payload.book_id &&
+      props.target?.kind === payload.kind &&
+      props.target?.key === payload.target_key
+    ) {
+      bioProgress.value = payload;
+    }
+  });
+});
+
+onBeforeUnmount(() => {
+  unlistenProgress?.();
+});
 
 const kindLabel = computed(() => {
   const kind = props.target?.kind;
@@ -73,6 +94,7 @@ async function generateBiography() {
     return;
   }
   generating.value = true;
+  bioProgress.value = null;
   try {
     biography.value = await api.generateBiography(
       props.bookId,
@@ -154,7 +176,11 @@ async function generateBiography() {
                 {{ wordCount }} 字 · {{ biography.updated_at }}
               </span>
               <span v-if="generating" class="text-xs text-gold-400">
-                <i class="fa-solid fa-spinner fa-spin mr-1" />本地模型生成中…
+                <i class="fa-solid fa-spinner fa-spin mr-1" />
+                {{ bioProgress?.message || "本地模型生成中…" }}
+                <template v-if="bioProgress && bioProgress.total">
+                  {{ bioProgress.current }}/{{ bioProgress.total }}
+                </template>
               </span>
             </div>
 

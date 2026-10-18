@@ -3,6 +3,13 @@
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/) 与 [Conventional Commits](https://www.conventionalcommits.org/zh-hans/)。
 每个有意义的功能实现或修复均递增 PATCH 版本。
 
+## [0.1.46] - fix(long-output)
+
+- 总结/阶段摘要改为直接输出纯文本，避免 JSON 包装导致截断。
+- 阶段材料过长时递归压缩成高层梗概，再生成最终总览；不逐章复述。
+- 传记改为两阶段：先整理逐章资料为高层梗概，再写传记；通过 `biography://progress` 显示整理/撰写进度。
+- 抽取分块在 JSON 重试仍失败时自动拆成两段再抽取并合并，降低长 JSON 截断造成的整章失败。
+
 ## [0.1.45] - style(tables)
 
 - 人物表、空间表、物品表改为 `table-fixed` 百分比列宽，移除固定最小宽度，表格始终适配窗口，不再需要横向滚动。
