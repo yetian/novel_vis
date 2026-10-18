@@ -322,16 +322,9 @@ pub async fn generate_book_summary(
     config: LlmConfig,
 ) -> AppResult<String> {
     let book = state.db.get_book(book_id)?;
-    let summary = pipeline::summarize_book(
-        &app,
-        &config,
-        book_id,
-        &book.title,
-        book.author.as_deref(),
-        &state.db,
-    )
-    .await?
-    .ok_or_else(|| AppError::Internal("暂无章节摘要，无法生成全书总览".into()))?;
+    let summary = pipeline::summarize_book(&app, &config, book_id, &book.title, &state.db)
+        .await?
+        .ok_or_else(|| AppError::Internal("暂无章节摘要，无法生成全书总览".into()))?;
     state.db.set_book_summary(book_id, &summary)?;
     Ok(summary)
 }

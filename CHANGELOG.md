@@ -3,6 +3,14 @@
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/) 与 [Conventional Commits](https://www.conventionalcommits.org/zh-hans/)。
 每个有意义的功能实现或修复均递增 PATCH 版本。
 
+## [0.1.47] - feat(summary)
+
+- 分组摘要改为最多 4 路并行处理，完成一个立即补位。
+- 每组只生成 1–2 句高层摘要，最后按顺序直接拼接；全书总览不再二次重写。
+- 传记采用同样策略：逐章资料分组并行生成 1–2 句摘要，再拼接成传记。
+- 分组进度通过 extraction / biography 进度事件实时显示。
+- 增加句子数限制，单组最多 2 句。
+
 ## [0.1.46] - fix(long-output)
 
 - 总结/阶段摘要改为直接输出纯文本，避免 JSON 包装导致截断。

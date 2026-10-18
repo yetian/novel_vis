@@ -168,16 +168,7 @@ pub async fn run_extraction(
             "全部章节抽取完成，正在生成全书总览…",
             0,
         );
-        match summarize_book(
-            &app,
-            &req.llm,
-            req.book_id,
-            &book.title,
-            book.author.as_deref(),
-            &db,
-        )
-        .await
-        {
+        match summarize_book(&app, &req.llm, req.book_id, &book.title, &db).await {
             Ok(Some(summary)) => {
                 db.set_book_summary(req.book_id, &summary)?;
                 emit_log(
@@ -222,7 +213,6 @@ pub async fn summarize_book(
     config: &LlmConfig,
     book_id: i64,
     title: &str,
-    author: Option<&str>,
     db: &crate::db::Db,
 ) -> AppResult<Option<String>> {
     let chapters = db.get_chapters(book_id)?;
@@ -251,133 +241,65 @@ pub async fn summarize_book(
         return Ok(None);
     }
 
-    // 控制单次上下文规模，兼容 8k 上下文的本地模型；过长时自动分批。
-    let batches = pack_summary_lines(&lines, 5_000);
-    let staged = batches.len() > 1;
-    let total_steps = if staged { batches.len() + 1 } else { 1 };
+    // 按较小分组并行生成 1-2 句高层摘要，最后直接拼接，不再二次重写。
+    let groups = pack_summary_lines(&lines, 2_500);
+    let total = groups.len();
     emit_progress(
         app,
         &book_id,
         "summarizing",
         0,
-        total_steps,
+        total,
         0,
         "",
-        if staged {
-            "正在生成阶段摘要…"
-        } else {
-            "正在生成全书总览…"
-        },
+        "正在并行生成分组摘要…",
         0,
     );
-
-    let (parts, stage_summaries) = if !staged {
-        (batches, Vec::new())
-    } else {
-        let mut stage_summaries = Vec::with_capacity(batches.len());
-        for (i, batch) in batches.iter().enumerate() {
-            emit_progress(
-                app,
-                &book_id,
-                "summarizing",
-                i,
-                total_steps,
-                0,
-                "",
-                &format!("正在生成阶段摘要 {}/{}…", i + 1, batches.len()),
-                0,
-            );
-            let prompt = format!(
-                "《{}》第 {}/{} 组摘要。用 180-240 字概括本阶段剧情、人物与地点，严格不超过 240 字，超出会截断；不提前后续，不分点。直接输出一段连续正文。\n\n{}",
+    let prompts: Vec<String> = groups
+        .iter()
+        .enumerate()
+        .map(|(i, group)| {
+            format!(
+                "《{}》第 {}/{} 组。用 1-2 句话（最多 120 字）概括本组最关键的剧情、人物与地点，不逐章、不分点，严格不超过 2 句。直接输出正文。\n\n{}",
                 title,
                 i + 1,
-                batches.len(),
-                batch
-            );
-            stage_summaries.push(call_summary(config, &prompt, 240).await?);
-            emit_progress(
-                app,
-                &book_id,
-                "summarizing",
-                i + 1,
-                total_steps,
-                0,
-                "",
-                &format!("阶段摘要 {}/{} 完成", i + 1, batches.len()),
-                0,
-            );
-        }
-        (stage_summaries.clone(), stage_summaries)
-    };
-
-    let author_line = author
-        .map(str::trim)
-        .filter(|a| !a.is_empty())
-        .map(|a| format!("作者：{a}"))
-        .unwrap_or_default();
-    let mut material_parts = parts;
-    let mut condense_rounds = 0;
-    while material_parts.join("\n\n").chars().count() > 6_000 && condense_rounds < 2 {
-        let groups = pack_summary_lines(&material_parts, 5_000);
-        if groups.len() >= material_parts.len() {
-            break;
-        }
-        let mut next = Vec::with_capacity(groups.len());
-        for group in groups {
-            let prompt = format!(
-                "以下是全书阶段摘要节选。用 200-300 字综合成高层梗概，只保留主线、关键人物与转折，不逐章罗列。严格不超过 300 字，超出会截断。直接输出正文。\n\n{group}"
-            );
-            next.push(call_summary(config, &prompt, 300).await?);
-        }
-        material_parts = next;
-        condense_rounds += 1;
+                total,
+                group
+            )
+        })
+        .collect();
+    let summaries = run_group_summaries(config, GroupMode::Summary, prompts, 140, |done| {
+        emit_progress(
+            app,
+            &book_id,
+            "summarizing",
+            done,
+            total,
+            0,
+            "",
+            &format!("分组摘要 {done}/{total} 完成"),
+            0,
+        );
+    })
+    .await?;
+    let summary = summaries.join("\n\n");
+    if !summary_is_usable(&summary) {
+        return Err(AppError::Llm("全书总览内容为空或无效".into()));
     }
-    let material = material_parts.join("\n\n");
-    let scope = if staged {
-        "以下是全书各阶段的摘要"
-    } else {
-        "以下是全书的章节摘要"
-    };
-    let prompt = format!(
-        "《{title}》{author_line}\n{scope}。请综合这些材料写 300-450 字全书总览，严格不超过 450 字，超出会截断；不要逐章复述。内容包含核心设定/世界/主线、开端—发展—转折—结局、3-8 位关键人物。只依据材料，不编造，不分点。直接输出正文，无标题、书名/作者或占位符。\n\n{}",
-        material
-    );
     emit_progress(
         app,
         &book_id,
         "summarizing",
-        total_steps.saturating_sub(1),
-        total_steps,
-        0,
-        "",
-        "正在汇总全书总览…",
-        0,
-    );
-    let final_summary = call_summary(config, &prompt, 450).await?;
-    emit_progress(
-        app,
-        &book_id,
-        "summarizing",
-        total_steps,
-        total_steps,
+        total,
+        total,
         0,
         "",
         "全书总览生成完成",
         0,
     );
-
-    // 保留所有阶段摘要（若有），与最终总览一起存储，前端可滚动展示全文。
-    let summary = if stage_summaries.is_empty() {
-        final_summary
-    } else {
-        let mut parts = vec![final_summary];
-        parts.extend(stage_summaries);
-        parts.join("\n\n")
-    };
     Ok(Some(summary))
 }
 
-const BIO_SYSTEM: &str = r#"你是中文小说资料编辑。根据高层资料写传记，最多 1800 字，严格不超过上限；按时间顺序写成连贯段落；只写资料中的事实，不编造；简体中文；不要标题、分点、前言或占位符。"#;
 const DOSSIER_SYSTEM: &str = r#"你是中文小说资料编辑。直接输出资料梗概，不写传记；只依据资料，不编造；简体中文；不分点、不写标题；严格遵守字数上限。"#;
 
 /// 按需生成人物 / 地点 / 物品传记。返回 (标题, 正文)。
@@ -516,83 +438,53 @@ pub async fn generate_biography(
         return Err(AppError::Internal("没有足够资料生成传记".into()));
     }
 
-    // 先按章节资料生成高层梗概，再据梗概写传记，避免直接逐章拼接。
-    let batches = pack_summary_lines(&lines, 3_500);
-    let total_steps = batches.len() + 1;
+    // 分组并行生成 1-2 句高层摘要，最后直接拼接成传记。
+    let groups = pack_summary_lines(&lines, 2_000);
+    let total = groups.len();
     emit_biography_progress(
         app,
         book_id,
         &kind,
         target_key,
         0,
-        total_steps,
-        "正在整理资料…",
+        total,
+        "正在并行整理资料…",
     );
-    let mut dossiers = Vec::with_capacity(batches.len());
-    for (i, batch) in batches.iter().enumerate() {
+    let prompts: Vec<String> = groups
+        .iter()
+        .enumerate()
+        .map(|(i, group)| {
+            format!(
+                "第 {}/{} 组{kind_label}资料。用 1-2 句话（最多 120 字）概括关键阶段、关系变化、地点/物品作用与转折，不逐章、不分点，严格不超过 2 句。直接输出正文。\n\n{}",
+                i + 1,
+                total,
+                group
+            )
+        })
+        .collect();
+    let summaries = run_group_summaries(config, GroupMode::Biography, prompts, 160, |done| {
         emit_biography_progress(
             app,
             book_id,
             &kind,
             target_key,
-            i,
-            total_steps,
-            &format!("正在整理资料 {}/{}…", i + 1, batches.len()),
+            done,
+            total,
+            &format!("资料整理 {done}/{total} 完成"),
         );
-        let prompt = format!(
-            "把以下{kind_label}资料综合成 220-320 字高层梗概，保留阶段、关系变化、关键地点/物品与转折，不逐章罗列。严格不超过 320 字，超出会截断。只输出梗概正文。\n\n{batch}"
-        );
-        dossiers.push(call_plain(config, DOSSIER_SYSTEM, &prompt, 320).await?);
-        emit_biography_progress(
-            app,
-            book_id,
-            &kind,
-            target_key,
-            i + 1,
-            total_steps,
-            &format!("资料整理 {}/{} 完成", i + 1, batches.len()),
-        );
+    })
+    .await?;
+    let biography = trim_to_sentence(&summaries.join("\n\n"), 1_800);
+    if !biography_usable(&biography) {
+        return Err(AppError::Llm("传记内容为空或无效".into()));
     }
-
-    let mut material = dossiers.join("\n\n");
-    let mut rounds = 0;
-    while material.chars().count() > 4_000 && rounds < 2 {
-        let groups = pack_summary_lines(&dossiers, 3_000);
-        if groups.len() >= dossiers.len() {
-            break;
-        }
-        let mut next = Vec::with_capacity(groups.len());
-        for group in groups {
-            let prompt = format!(
-                "把以下高层梗概再综合成 250-350 字，保留主线、人物关系与关键转折，不逐章罗列。严格不超过 350 字。只输出正文。\n\n{group}"
-            );
-            next.push(call_plain(config, DOSSIER_SYSTEM, &prompt, 350).await?);
-        }
-        dossiers = next;
-        material = dossiers.join("\n\n");
-        rounds += 1;
-    }
-
     emit_biography_progress(
         app,
         book_id,
         &kind,
         target_key,
-        total_steps.saturating_sub(1),
-        total_steps,
-        "正在撰写传记…",
-    );
-    let prompt = format!(
-        "根据以下高层资料，为{kind_label}《{title}》写一篇传记，尽量 1200-1800 字，严格不超过 1800 字（超出会截断）。按时间顺序综合叙述其经历、变化与关系，不要逐章罗列。只依据资料，不编造，不写标题或分点。直接输出正文。\n\n{material}"
-    );
-    let biography = call_plain(config, BIO_SYSTEM, &prompt, 1_800).await?;
-    emit_biography_progress(
-        app,
-        book_id,
-        &kind,
-        target_key,
-        total_steps,
-        total_steps,
+        total,
+        total,
         "传记生成完成",
     );
     Ok((title, biography))
@@ -734,6 +626,89 @@ async fn call_summary(config: &LlmConfig, prompt: &str, max_chars: usize) -> App
 }
 
 /// 超长时在最近的句末标点处截断，避免把句子硬切一半。
+#[derive(Clone, Copy)]
+enum GroupMode {
+    Summary,
+    Biography,
+}
+
+async fn call_group(
+    config: &LlmConfig,
+    mode: GroupMode,
+    prompt: &str,
+    max_chars: usize,
+) -> AppResult<String> {
+    let text = match mode {
+        GroupMode::Summary => call_summary(config, prompt, max_chars).await?,
+        GroupMode::Biography => call_plain(config, DOSSIER_SYSTEM, prompt, max_chars).await?,
+    };
+    Ok(limit_sentences(&text, 2, max_chars))
+}
+
+/// 最多 4 个并发任务处理分组摘要；按输入顺序返回结果。
+async fn run_group_summaries(
+    config: &LlmConfig,
+    mode: GroupMode,
+    prompts: Vec<String>,
+    max_chars: usize,
+    mut on_done: impl FnMut(usize),
+) -> AppResult<Vec<String>> {
+    let total = prompts.len();
+    if total == 0 {
+        return Ok(Vec::new());
+    }
+    let mut results: Vec<Option<String>> = (0..total).map(|_| None).collect();
+    let mut next = 0usize;
+    let mut done = 0usize;
+    let mut set: tokio::task::JoinSet<(usize, AppResult<String>)> = tokio::task::JoinSet::new();
+
+    while next < total || !set.is_empty() {
+        while set.len() < 4 && next < total {
+            let cfg = config.clone();
+            let prompt = prompts[next].clone();
+            let index = next;
+            next += 1;
+            set.spawn(async move { (index, call_group(&cfg, mode, &prompt, max_chars).await) });
+        }
+        if let Some(joined) = set.join_next().await {
+            match joined {
+                Ok((index, Ok(text))) => {
+                    results[index] = Some(text);
+                    done += 1;
+                    on_done(done);
+                }
+                Ok((_, Err(e))) => return Err(e),
+                Err(e) => {
+                    return Err(AppError::Internal(format!("分组摘要任务失败: {e}")));
+                }
+            }
+        }
+    }
+
+    results
+        .into_iter()
+        .map(|item| item.ok_or_else(|| AppError::Llm("分组摘要缺失".into())))
+        .collect()
+}
+
+fn limit_sentences(text: &str, max_sentences: usize, max_chars: usize) -> String {
+    let mut out = String::new();
+    let mut sentences = 0usize;
+    for ch in text.trim().chars() {
+        out.push(ch);
+        if matches!(ch, '。' | '！' | '？' | '!' | '?' | '；' | ';') {
+            sentences += 1;
+            if sentences >= max_sentences {
+                break;
+            }
+        }
+        if out.chars().count() >= max_chars {
+            break;
+        }
+    }
+    trim_to_sentence(&out, max_chars)
+}
+
 fn trim_to_sentence(text: &str, max_chars: usize) -> String {
     let trimmed = text.trim();
     let chars: Vec<char> = trimmed.chars().collect();
