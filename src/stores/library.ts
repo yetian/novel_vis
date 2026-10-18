@@ -48,7 +48,7 @@ export const useLibraryStore = defineStore("library", {
       this.ingesting = true;
       try {
         const inspection = await api.inspectBook(path);
-        if (inspection.suspected_multi_book && inspection.candidates.length >= 2) {
+        if (inspection.suspected_multi_book && inspection.candidates.length > 0) {
           this.pending = { path, inspection };
           return;
         }
@@ -59,11 +59,11 @@ export const useLibraryStore = defineStore("library", {
         this.ingesting = false;
       }
     },
-    async doIngest(path: string, splitIntoBooks: boolean, candidateIndices?: number[]) {
+    async doIngest(path: string, splitIntoBooks: boolean, candidateIds?: string[]) {
       const ui = useUiStore();
       this.ingesting = true;
       try {
-        const results = await api.ingestBook(path, splitIntoBooks, candidateIndices);
+        const results = await api.ingestBook(path, splitIntoBooks, candidateIds);
         if (results.length === 1) {
           ui.toast(`已导入《${results[0].title}》，共 ${results[0].total_chapters} 章`, "success");
         } else {
@@ -80,9 +80,9 @@ export const useLibraryStore = defineStore("library", {
         this.ingesting = false;
       }
     },
-    async confirmPending(splitIntoBooks: boolean, candidateIndices?: number[]) {
+    async confirmPending(splitIntoBooks: boolean, candidateIds?: string[]) {
       if (!this.pending) return;
-      await this.doIngest(this.pending.path, splitIntoBooks, candidateIndices);
+      await this.doIngest(this.pending.path, splitIntoBooks, candidateIds);
     },
     cancelPending() {
       this.pending = null;

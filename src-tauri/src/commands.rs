@@ -13,14 +13,22 @@ pub async fn inspect_book(path: String) -> AppResult<BookInspection> {
     let bytes = tokio::fs::read(&path).await?;
     let book = parser::parse_book(&path, &bytes)?;
 
-    let suspected = book.candidates.len() >= 2;
+    let top = &book.candidates;
+    let nested = top.len() == 1
+        && top[0].children.len() >= 2
+        && top[0]
+            .children
+            .iter()
+            .any(|child| !child.children.is_empty());
+    let collection_title =
+        top.len() == 1 && top[0].children.len() >= 2 && is_collection_title(&top[0].title);
+    let suspected = top.len() >= 2 || nested || collection_title;
     let mut signals = Vec::new();
     if suspected {
-        let sub_count: usize = book.candidates.iter().map(|c| c.subchapters.len()).sum();
         signals.push(format!(
-            "目录识别出 {} 个主章节 / {} 个子章节",
-            book.candidates.len(),
-            sub_count
+            "目录识别出 {} 个顶层节点 / {} 个可选节点",
+            top.len(),
+            count_candidates(top)
         ));
     }
 
@@ -35,31 +43,87 @@ pub async fn inspect_book(path: String) -> AppResult<BookInspection> {
     })
 }
 
+fn count_candidates(nodes: &[BookCandidate]) -> usize {
+    nodes
+        .iter()
+        .map(|node| 1 + count_candidates(&node.children))
+        .sum()
+}
+
+fn is_collection_title(title: &str) -> bool {
+    let title = title.to_lowercase();
+    [
+        "全集",
+        "合集",
+        "套装",
+        "文集",
+        "collection",
+        "omnibus",
+        "complete",
+    ]
+    .iter()
+    .any(|needle| title.contains(needle))
+}
+
+fn find_candidate<'a>(nodes: &'a [BookCandidate], id: &str) -> Option<&'a BookCandidate> {
+    for node in nodes {
+        if node.id == id {
+            return Some(node);
+        }
+        if let Some(found) = find_candidate(&node.children, id) {
+            return Some(found);
+        }
+    }
+    None
+}
+
 /// 导入电子书：读取文件到内存，解析分章，写入数据库并缓存原文。
-/// `split_into_books` 为真时按选中的主章节拆分；`candidate_indices` 为空则使用全部候选。
+/// `split_into_books` 为真时按选中的目录节点拆分；`candidate_ids` 为空则使用全部顶层候选。
 #[tauri::command]
 pub async fn ingest_book(
     state: State<'_, AppState>,
     path: String,
     split_into_books: Option<bool>,
-    candidate_indices: Option<Vec<usize>>,
+    candidate_ids: Option<Vec<String>>,
 ) -> AppResult<Vec<IngestResult>> {
     let bytes = tokio::fs::read(&path).await?;
     let book = parser::parse_book(&path, &bytes)?;
 
     let split = split_into_books.unwrap_or(false) && !book.candidates.is_empty();
     let parts = if split {
-        let chosen: Vec<BookCandidate> = match &candidate_indices {
-            Some(indices) => indices
-                .iter()
-                .filter_map(|&i| book.candidates.get(i).cloned())
-                .collect(),
+        let chosen: Vec<BookCandidate> = match &candidate_ids {
+            Some(ids) => {
+                let mut refs: Vec<&BookCandidate> = Vec::new();
+                for id in ids {
+                    if let Some(node) = find_candidate(&book.candidates, id) {
+                        if !refs.iter().any(|n| n.id == node.id) {
+                            refs.push(node);
+                        }
+                    }
+                }
+                // 父节点已选中时忽略其后代，避免同一段正文被导入两次。
+                let roots: Vec<&BookCandidate> = refs
+                    .iter()
+                    .copied()
+                    .filter(|node| {
+                        !refs.iter().any(|other| {
+                            other.id != node.id && node.id.starts_with(&format!("{}.", other.id))
+                        })
+                    })
+                    .collect();
+                roots.into_iter().cloned().collect()
+            }
             None => book.candidates.clone(),
         };
         if chosen.is_empty() {
-            return Err(AppError::Internal("请至少选择一个主章节".into()));
+            return Err(AppError::Internal("请至少选择一个目录节点".into()));
         }
-        if chosen.len() == book.candidates.len() {
+        if book.candidates.len() >= 2
+            && chosen.len() == book.candidates.len()
+            && chosen
+                .iter()
+                .all(|c| book.candidates.iter().any(|t| t.id == c.id))
+        {
             parser::split_book(&book, &chosen)
         } else {
             parser::split_book_selected(&book, &chosen)

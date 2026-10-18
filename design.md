@@ -1,6 +1,6 @@
 # ChronoSpace Reader · 架构设计蓝图（design.md）
 
-> 当前版本：**v0.1.33**
+> 当前版本：**v0.1.34**
 > 本文档描述系统架构、数据流、SQLite 关系模式、状态机、协议契约与 UI 组件层级，并与代码库保持同步。
 
 ---
@@ -279,11 +279,11 @@ sequenceDiagram
   participant PAR as parser::epub
   FE->>CMD: inspect_book(path)
   CMD->>PAR: parse_book → candidates
-  PAR-->>CMD: BookCandidate[]（主章节 + 子章节）
+  PAR-->>CMD: BookCandidate[]（目录树：合集/书/章节）
   CMD-->>FE: BookInspection { suspected_multi_book, candidates }
   alt suspected_multi_book
-    FE->>FE: 弹出对话框，勾选主章节（可全选/部分选择）
-    FE->>CMD: ingest_book(path, splitIntoBooks, candidateIndices)
+    FE->>FE: 弹出对话框，按层级或任意节点勾选
+    FE->>CMD: ingest_book(path, splitIntoBooks, candidateIds)
     CMD->>PAR: split_book_selected / split_book
     CMD->>CMD: 逐本 insert_book + insert_chapter + cache
     CMD-->>FE: IngestResult[]
@@ -292,11 +292,11 @@ sequenceDiagram
   end
 ```
 
-- **探测信号**：解析 EPUB3 `nav.xhtml`（`epub:type="toc"`）或 EPUB2 `toc.ncx` 的 `navMap` 顶级分组；每个顶级分组通过其 `href` 子树映射到 spine 章节区间。当 ≥2 个分组各自能映射到正文时，判定疑似合订本。
-- **候选结构**：`BookCandidate { title, start_index, end_index, chapter_count, subchapters }`；`subchapters` 保存目录中的子章节标题、区间与层级深度，供导入前预览。
-- **拆分语义**：`split_book_selected` 只导入用户勾选的主章节区间，区间内的子章节自动成为该书的章节，并**重排 `chapter_index`**（每本从 0 起）；未勾选的主章节不导入。全选时走 `split_book`，未被任何候选覆盖的章节归入《原书名 · 其他》，避免正文丢失。
-- **确认契约**：`inspect_book` 只读探查、不落库；`ingest_book(splitIntoBooks, candidateIndices)` 才真正写库并缓存到 `AppState.books`（每本独立缓存）。
-- **UI**：`MultiBookDialog.vue` 展示主章节复选框、章节区间、子章节明细与已选统计，提供「导入选中 / 作为单本导入 / 取消」。MOBI/AZW3 暂不做多本探测（无结构化目录）。
+- **探测信号**：解析 EPUB3 `nav.xhtml`（`epub:type="toc"`）或 EPUB2 `toc.ncx` 的 `navMap` 顶级分组；每个顶层节点通过其 `href` 子树映射到 spine 章节区间。当 ≥2 个顶层节点，或单个顶层节点包含 ≥2 个带下级的子书/标题为“全集/合集/套装”等时，判定疑似合订本。
+- **候选结构**：`BookCandidate { id, title, start_index, end_index, chapter_count, depth, children }` 递归保存目录树；`id` 为稳定路径（如 `0.1`），支持在任意层级选择合集、书或章节组。
+- **拆分语义**：`split_book_selected` 只导入用户勾选的节点区间，节点下的所有后代自动成为该书的章节，并**重排 `chapter_index`**（每本从 0 起）；父子节点同时被选中时只保留父节点。全选顶层时走 `split_book`，未被覆盖的章节归入《原书名 · 其他》，避免正文丢失。
+- **确认契约**：`inspect_book` 只读探查、不落库；`ingest_book(splitIntoBooks, candidateIds)` 才真正写库并缓存到 `AppState.books`（每本独立缓存）。
+- **UI**：`MultiBookDialog.vue` 使用递归 `BookCandidateNode.vue` 展示目录树、章节区间、下级数量与已选统计；支持「按层级全选 / 清空 / 导入选中 / 作为单本导入 / 取消」。MOBI/AZW3 暂不做多本探测（无结构化目录）。
 
 ---
 
@@ -305,7 +305,7 @@ sequenceDiagram
 | 命令 | 入参 | 出参 | 说明 |
 | --- | --- | --- | --- |
 | `inspect_book` | `path: string` | `BookInspection` | 导入前探查，判断是否疑似合订本 |
-| `ingest_book` | `path: string, splitIntoBooks?: boolean, candidateIndices?: number[]` | `IngestResult[]` | 读文件入内存并解析落库；可按选中的主章节拆分 |
+| `ingest_book` | `path: string, splitIntoBooks?: boolean, candidateIds?: string[]` | `IngestResult[]` | 读文件入内存并解析落库；可按选中的目录节点拆分 |
 | `list_books` | — | `BookRow[]` | 书库列表（含抽取进度） |
 | `get_timeline` | `bookId: number` | `TimelineBundle` | 画布聚合数据 |
 | `delete_book` | `bookId: number` | `void` | 级联删除 |

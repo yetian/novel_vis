@@ -123,27 +123,21 @@ pub struct ParsedChapter {
     pub char_count: usize,
 }
 
-/// 合订本中的子章节（来自目录层级，用于导入前预览）。
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BookSubchapter {
-    pub title: String,
-    pub start_index: i64,
-    pub end_index: i64,
-    /// 目录层级，1 表示主章节的直接子级。
-    #[serde(default)]
-    pub depth: usize,
-}
-
-/// 单本电子书中可能包含的候选书目（用于合订本/合集的拆分确认）。
+/// 合订本目录中的候选节点：可以是合集、单本书或章节组。
+/// 子节点保留目录层级，导入时选中任意层级即可把该节点及其后代作为一本书。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BookCandidate {
+    /// 稳定的目录路径，例如 "0" / "0.1" / "0.1.2"。
+    pub id: String,
     pub title: String,
     pub start_index: i64,
     pub end_index: i64,
     pub chapter_count: usize,
-    /// 该主章节下的子章节；导入后会落在同一本书内。
+    /// 目录深度，0 表示顶层候选。
     #[serde(default)]
-    pub subchapters: Vec<BookSubchapter>,
+    pub depth: usize,
+    #[serde(default)]
+    pub children: Vec<BookCandidate>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -152,7 +146,7 @@ pub struct ParsedBook {
     pub author: Option<String>,
     pub format: String,
     pub chapters: Vec<ParsedChapter>,
-    /// 由目录结构推断出的候选书目；长度 >= 2 时提示可能为合订本。
+    /// 由目录结构推断出的候选树；是否提示合订本由 `inspect_book` 判断。
     pub candidates: Vec<BookCandidate>,
 }
 

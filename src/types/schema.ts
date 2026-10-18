@@ -26,19 +26,15 @@ export interface IngestResult {
   total_chapters: number;
 }
 
-export interface BookSubchapter {
-  title: string;
-  start_index: number;
-  end_index: number;
-  depth: number;
-}
-
 export interface BookCandidate {
+  /** 稳定目录路径，例如 "0" / "0.1" / "0.1.2"。 */
+  id: string;
   title: string;
   start_index: number;
   end_index: number;
   chapter_count: number;
-  subchapters: BookSubchapter[];
+  depth: number;
+  children: BookCandidate[];
 }
 
 export interface BookInspection {

@@ -67,8 +67,8 @@ pub fn parse_book(filename: &str, bytes: &[u8]) -> AppResult<ParsedBook> {
     }
 }
 
-/// 按选中的主章节把电子书拆分为多本；每本书包含该范围内的子章节。
-/// 未被选中的章节不会导入，也不会额外生成「其他」一书。
+/// 按选中的目录节点把电子书拆分为多本；每个节点包含其区间内的所有后代章节。
+/// 未被选中的节点不会导入，也不会额外生成「其他」一书。
 pub fn split_book_selected(book: &ParsedBook, candidates: &[BookCandidate]) -> Vec<ParsedBook> {
     if candidates.is_empty() {
         return Vec::new();
@@ -186,18 +186,22 @@ mod tests {
         let book = book_with(4);
         let candidates = vec![
             BookCandidate {
+                id: "0".into(),
                 title: "上卷".into(),
                 start_index: 0,
                 end_index: 1,
                 chapter_count: 2,
-                subchapters: vec![],
+                depth: 0,
+                children: vec![],
             },
             BookCandidate {
+                id: "1".into(),
                 title: "下卷".into(),
                 start_index: 2,
                 end_index: 3,
                 chapter_count: 2,
-                subchapters: vec![],
+                depth: 0,
+                children: vec![],
             },
         ];
         let parts = split_book(&book, &candidates);
@@ -214,29 +218,35 @@ mod tests {
     fn split_book_collects_uncovered_chapters() {
         let book = book_with(3);
         let candidates = vec![BookCandidate {
+            id: "0".into(),
             title: "上卷".into(),
             start_index: 1,
             end_index: 1,
             chapter_count: 1,
-            subchapters: vec![],
+            depth: 0,
+            children: vec![],
         }];
         // 少于 2 个候选 -> 不拆分
         assert_eq!(split_book(&book, &candidates).len(), 1);
 
         let candidates = vec![
             BookCandidate {
+                id: "0".into(),
                 title: "上卷".into(),
                 start_index: 1,
                 end_index: 1,
                 chapter_count: 1,
-                subchapters: vec![],
+                depth: 0,
+                children: vec![],
             },
             BookCandidate {
+                id: "1".into(),
                 title: "下卷".into(),
                 start_index: 2,
                 end_index: 2,
                 chapter_count: 1,
-                subchapters: vec![],
+                depth: 0,
+                children: vec![],
             },
         ];
         let parts = split_book(&book, &candidates);
@@ -250,11 +260,13 @@ mod tests {
     fn split_book_selected_includes_range_and_skips_unselected() {
         let book = book_with(4);
         let chosen = vec![BookCandidate {
+            id: "0".into(),
             title: "选中的书".into(),
             start_index: 0,
             end_index: 1,
             chapter_count: 2,
-            subchapters: vec![],
+            depth: 0,
+            children: vec![],
         }];
         let parts = split_book_selected(&book, &chosen);
         assert_eq!(parts.len(), 1, "只导入选中的主章节");

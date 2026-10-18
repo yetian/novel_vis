@@ -1,6 +1,6 @@
 use super::util::{guess_title_with_book, hash_text, strip_html};
 use crate::error::{AppError, AppResult};
-use crate::models::{BookCandidate, BookSubchapter, ParsedBook, ParsedChapter};
+use crate::models::{BookCandidate, ParsedBook, ParsedChapter};
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::Reader;
 use std::collections::HashMap;
@@ -127,41 +127,65 @@ fn read_navigation<R: Read + std::io::Seek>(
     (Vec::new(), opf_dir.to_string())
 }
 
-/// 依据目录顶级分组推断候选书目。仅当至少 2 个分组各自能映射到正文时才算数。
+/// 依据目录分组构建候选树；子节点保留完整层级：合集 -> 书 -> 章节。
+/// 是否弹出导入对话框由 `inspect_book` 结合层级/标题判断。
 fn build_candidates(
     entries: &[NavEntry],
     base_dir: &str,
     path_to_index: &HashMap<String, i64>,
 ) -> Vec<BookCandidate> {
-    let mut out = Vec::new();
-    for entry in entries {
-        let mut indices: Vec<i64> = Vec::new();
-        collect_indices(entry, base_dir, path_to_index, &mut indices);
-        indices.sort_unstable();
-        indices.dedup();
-        if indices.is_empty() {
-            continue;
-        }
-        let start = *indices.first().unwrap();
-        let end = *indices.last().unwrap();
-        let title = if entry.title.trim().is_empty() {
-            format!("第 {} 部", out.len() + 1)
+    let out: Vec<BookCandidate> = entries
+        .iter()
+        .enumerate()
+        .filter_map(|(i, entry)| {
+            candidate_node(entry, base_dir, path_to_index, format!("{i}"), 0, i + 1)
+        })
+        .collect();
+    out
+}
+
+fn candidate_node(
+    entry: &NavEntry,
+    base_dir: &str,
+    path_to_index: &HashMap<String, i64>,
+    id: String,
+    depth: usize,
+    fallback_index: usize,
+) -> Option<BookCandidate> {
+    let mut indices: Vec<i64> = Vec::new();
+    collect_indices(entry, base_dir, path_to_index, &mut indices);
+    indices.sort_unstable();
+    indices.dedup();
+    let (start, end) = (indices.first().copied()?, indices.last().copied()?);
+    let children: Vec<BookCandidate> = entry
+        .children
+        .iter()
+        .enumerate()
+        .filter_map(|(i, child)| {
+            candidate_node(
+                child,
+                base_dir,
+                path_to_index,
+                format!("{id}.{i}"),
+                depth + 1,
+                i + 1,
+            )
+        })
+        .collect();
+    let title = entry.title.trim();
+    Some(BookCandidate {
+        id,
+        title: if title.is_empty() {
+            format!("第 {fallback_index} 部")
         } else {
-            entry.title.trim().to_string()
-        };
-        out.push(BookCandidate {
-            title,
-            start_index: start,
-            end_index: end,
-            chapter_count: (end - start + 1) as usize,
-            subchapters: collect_subchapters(entry, base_dir, path_to_index),
-        });
-    }
-    if out.len() >= 2 {
-        out
-    } else {
-        Vec::new()
-    }
+            title.to_string()
+        },
+        start_index: start,
+        end_index: end,
+        chapter_count: (end - start + 1) as usize,
+        depth,
+        children,
+    })
 }
 
 fn collect_indices(
@@ -182,46 +206,6 @@ fn collect_indices(
     for child in &entry.children {
         collect_indices(child, base_dir, path_to_index, out);
     }
-}
-
-/// 收集主章节下的子章节；保留目录深度，供导入前预览。
-fn collect_subchapters(
-    entry: &NavEntry,
-    base_dir: &str,
-    path_to_index: &HashMap<String, i64>,
-) -> Vec<BookSubchapter> {
-    fn walk(
-        parent: &NavEntry,
-        base_dir: &str,
-        path_to_index: &HashMap<String, i64>,
-        depth: usize,
-        out: &mut Vec<BookSubchapter>,
-    ) {
-        for child in &parent.children {
-            let mut indices = Vec::new();
-            collect_indices(child, base_dir, path_to_index, &mut indices);
-            indices.sort_unstable();
-            indices.dedup();
-            if let (Some(start), Some(end)) = (indices.first(), indices.last()) {
-                let title = child.title.trim();
-                out.push(BookSubchapter {
-                    title: if title.is_empty() {
-                        format!("子章节 {}", out.len() + 1)
-                    } else {
-                        title.to_string()
-                    },
-                    start_index: *start,
-                    end_index: *end,
-                    depth,
-                });
-            }
-            walk(child, base_dir, path_to_index, depth + 1, out);
-        }
-    }
-
-    let mut out = Vec::new();
-    walk(entry, base_dir, path_to_index, 1, &mut out);
-    out
 }
 
 fn read_zip_entry<R: Read + std::io::Seek>(
@@ -750,12 +734,98 @@ mod tests {
         assert_eq!(book.candidates[0].title, "上卷 · 风起");
         assert_eq!(book.candidates[0].start_index, 0);
         assert_eq!(book.candidates[0].end_index, 1);
-        assert_eq!(book.candidates[0].subchapters.len(), 1);
-        assert_eq!(book.candidates[0].subchapters[0].title, "第二章");
-        assert_eq!(book.candidates[0].subchapters[0].depth, 1);
+        assert_eq!(book.candidates[0].children.len(), 1);
+        assert_eq!(book.candidates[0].children[0].title, "第二章");
+        assert_eq!(book.candidates[0].children[0].depth, 1);
         assert_eq!(book.candidates[1].title, "下卷 · 云涌");
         assert_eq!(book.candidates[1].start_index, 2);
         assert_eq!(book.candidates[1].end_index, 3);
+    }
+
+    #[test]
+    fn builds_nested_collection_book_chapter_tree() {
+        let entries = vec![
+            NavEntry {
+                title: "合集一".into(),
+                href: Some("c1.xhtml".into()),
+                children: vec![NavEntry {
+                    title: "书一".into(),
+                    href: Some("b1.xhtml".into()),
+                    children: vec![NavEntry {
+                        title: "第一章".into(),
+                        href: Some("ch1.xhtml".into()),
+                        children: vec![],
+                    }],
+                }],
+            },
+            NavEntry {
+                title: "合集二".into(),
+                href: Some("c2.xhtml".into()),
+                children: vec![],
+            },
+            NavEntry {
+                title: "合集三".into(),
+                href: Some("c3.xhtml".into()),
+                children: vec![],
+            },
+        ];
+        let mut map = HashMap::new();
+        for (i, name) in ["c1.xhtml", "b1.xhtml", "ch1.xhtml", "c2.xhtml", "c3.xhtml"]
+            .iter()
+            .enumerate()
+        {
+            map.insert((*name).to_string(), i as i64);
+        }
+
+        let candidates = build_candidates(&entries, "", &map);
+        assert_eq!(candidates.len(), 3);
+        assert_eq!(candidates[0].id, "0");
+        assert_eq!(candidates[0].depth, 0);
+        assert_eq!(candidates[0].children[0].id, "0.0");
+        assert_eq!(candidates[0].children[0].depth, 1);
+        assert_eq!(candidates[0].children[0].children[0].id, "0.0.0");
+        assert_eq!(candidates[0].children[0].children[0].depth, 2);
+        assert_eq!(candidates[0].children[0].children[0].title, "第一章");
+    }
+
+    #[test]
+    fn keeps_single_collection_root_for_nested_import() {
+        let entries = vec![NavEntry {
+            title: "全集".into(),
+            href: Some("root.xhtml".into()),
+            children: vec![
+                NavEntry {
+                    title: "书一".into(),
+                    href: Some("b1.xhtml".into()),
+                    children: vec![NavEntry {
+                        title: "第一章".into(),
+                        href: Some("c1.xhtml".into()),
+                        children: vec![],
+                    }],
+                },
+                NavEntry {
+                    title: "书二".into(),
+                    href: Some("b2.xhtml".into()),
+                    children: vec![NavEntry {
+                        title: "第二章".into(),
+                        href: Some("c2.xhtml".into()),
+                        children: vec![],
+                    }],
+                },
+            ],
+        }];
+        let mut map = HashMap::new();
+        for (i, name) in ["root.xhtml", "b1.xhtml", "c1.xhtml", "b2.xhtml", "c2.xhtml"]
+            .iter()
+            .enumerate()
+        {
+            map.insert((*name).to_string(), i as i64);
+        }
+        let candidates = build_candidates(&entries, "", &map);
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].title, "全集");
+        assert_eq!(candidates[0].children.len(), 2);
+        assert_eq!(candidates[0].children[0].children[0].title, "第一章");
     }
 
     #[test]

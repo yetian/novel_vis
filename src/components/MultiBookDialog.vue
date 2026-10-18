@@ -1,50 +1,99 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { useLibraryStore } from "@/stores/library";
+import BookCandidateNode from "@/components/BookCandidateNode.vue";
+import type { BookCandidate } from "@/types/schema";
 
 const library = useLibraryStore();
 
 const pending = computed(() => library.pending);
-const selected = ref<number[]>([]);
+const selectedIds = ref<string[]>([]);
+const expandedIds = ref<string[]>([]);
 
 watch(
   pending,
   (p) => {
-    selected.value = p ? p.inspection.candidates.map((_, i) => i) : [];
+    const top = p?.inspection.candidates ?? [];
+    selectedIds.value = top.map((c) => c.id);
+    expandedIds.value = top.map((c) => c.id);
   },
   { immediate: true },
 );
 
 const candidates = computed(() => pending.value?.inspection.candidates ?? []);
-const allSelected = computed(
-  () => candidates.value.length > 0 && selected.value.length === candidates.value.length,
-);
-const selectedChapters = computed(() =>
-  candidates.value.reduce(
-    (sum, c, i) => sum + (selected.value.includes(i) ? c.chapter_count : 0),
-    0,
-  ),
-);
-const selectedSubchapters = computed(() =>
-  candidates.value.reduce(
-    (sum, c, i) => sum + (selected.value.includes(i) ? c.subchapters.length : 0),
-    0,
-  ),
-);
 
-function toggle(index: number) {
-  selected.value = selected.value.includes(index)
-    ? selected.value.filter((i) => i !== index)
-    : [...selected.value, index].sort((a, b) => a - b);
+function flatten(nodes: BookCandidate[]): BookCandidate[] {
+  return nodes.flatMap((node) => [node, ...flatten(node.children)]);
 }
 
-function toggleAll() {
-  selected.value = allSelected.value ? [] : candidates.value.map((_, i) => i);
+const allNodes = computed(() => flatten(candidates.value));
+const nodeById = computed(() => new Map(allNodes.value.map((node) => [node.id, node])));
+const selectedNodes = computed(() =>
+  allNodes.value.filter((node) => selectedIds.value.includes(node.id)),
+);
+const selectedChapters = computed(() =>
+  selectedNodes.value.reduce((sum, node) => sum + node.chapter_count, 0),
+);
+
+function countDescendants(node: BookCandidate): number {
+  return node.children.reduce((sum, child) => sum + 1 + countDescendants(child), 0);
+}
+
+const selectedDescendants = computed(() =>
+  selectedNodes.value.reduce((sum, node) => sum + countDescendants(node), 0),
+);
+
+const depthOptions = computed(() => {
+  const groups = new Map<number, BookCandidate[]>();
+  for (const node of allNodes.value) {
+    const list = groups.get(node.depth) ?? [];
+    list.push(node);
+    groups.set(node.depth, list);
+  }
+  return [...groups.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([depth, nodes]) => ({ depth, nodes }));
+});
+
+function depthLabel(depth: number): string {
+  return depth === 0 ? "顶层" : `第 ${depth + 1} 层`;
+}
+
+function selectDepth(depth: number) {
+  selectedIds.value = allNodes.value
+    .filter((node) => node.depth === depth)
+    .map((node) => node.id);
+}
+
+function descendantIds(node: BookCandidate): string[] {
+  return node.children.flatMap((child) => [child.id, ...descendantIds(child)]);
+}
+
+function toggle(id: string, checked: boolean) {
+  const node = nodeById.value.get(id);
+  if (!node) return;
+  const removed = new Set([id, ...descendantIds(node)]);
+  if (checked) {
+    selectedIds.value = [...selectedIds.value.filter((x) => !removed.has(x)), id];
+  } else {
+    selectedIds.value = selectedIds.value.filter((x) => !removed.has(x));
+  }
+}
+
+function toggleExpand(id: string) {
+  expandedIds.value = expandedIds.value.includes(id)
+    ? expandedIds.value.filter((x) => x !== id)
+    : [...expandedIds.value, id];
+}
+
+function clearAll() {
+  selectedIds.value = [];
 }
 
 function confirmSelected() {
-  if (!selected.value.length) return;
-  library.confirmPending(true, [...selected.value].sort((a, b) => a - b));
+  const ids = selectedNodes.value.map((node) => node.id);
+  if (!ids.length) return;
+  library.confirmPending(true, ids);
 }
 </script>
 
@@ -58,12 +107,12 @@ function confirmSelected() {
       <div class="panel flex max-h-[88vh] w-full max-w-2xl flex-col overflow-hidden">
         <div class="flex items-center gap-3 border-b border-ink-600/60 px-5 py-4">
           <div class="grid h-10 w-10 place-items-center rounded-lg bg-gold-400/15 text-gold-400">
-            <i class="fa-solid fa-book-open-reader" />
+            <i class="fa-solid fa-sitemap" />
           </div>
           <div>
-            <h3 class="font-semibold text-slate-100">选择要导入的主章节</h3>
+            <h3 class="font-semibold text-slate-100">选择要导入的目录节点</h3>
             <p class="text-xs text-slate-400">
-              《{{ pending.inspection.title }}》似乎包含多本书；勾选主章节，其子章节会作为同一本书的章节导入。
+              《{{ pending.inspection.title }}》包含多层级目录；勾选任意节点作为一本书，其下级会作为该书的章节。
             </p>
           </div>
         </div>
@@ -77,68 +126,41 @@ function confirmSelected() {
             </span>
           </div>
 
-          <div class="mt-3 flex items-center justify-between gap-3">
+          <div class="mt-3 flex flex-wrap items-center justify-between gap-2">
             <p class="text-xs text-slate-400">
-              已选 <span class="font-medium tabular-nums text-slate-200">{{ selected.length }}</span> 本 ·
+              已选 <span class="font-medium tabular-nums text-slate-200">{{ selectedNodes.length }}</span> 本 ·
               <span class="tabular-nums">{{ selectedChapters }}</span> 章
-              <template v-if="selectedSubchapters"> · {{ selectedSubchapters }} 个子章节</template>
+              <template v-if="selectedDescendants"> · {{ selectedDescendants }} 个下级节点</template>
             </p>
-            <button class="btn-ghost !px-2 !py-1 text-xs" @click="toggleAll">
-              {{ allSelected ? "清空选择" : "全选" }}
-            </button>
-          </div>
-
-          <div class="mt-2 space-y-2">
-            <div
-              v-for="(c, i) in candidates"
-              :key="c.title + i"
-              class="overflow-hidden rounded-lg border transition"
-              :class="
-                selected.includes(i)
-                  ? 'border-jade-500/50 bg-jade-500/[0.06]'
-                  : 'border-ink-600/60 bg-ink-900/20'
-              "
-            >
-              <label class="flex cursor-pointer items-center gap-3 px-3 py-2.5">
-                <input
-                  type="checkbox"
-                  class="h-3.5 w-3.5 shrink-0 accent-jade-500"
-                  :checked="selected.includes(i)"
-                  @change="toggle(i)"
-                />
-                <span class="grid h-6 w-6 shrink-0 place-items-center rounded bg-ink-600 text-[11px] text-slate-400">
-                  {{ i + 1 }}
-                </span>
-                <span class="min-w-0 flex-1">
-                  <span class="block truncate text-sm text-slate-200">{{ c.title }}</span>
-                  <span class="mt-0.5 block text-[11px] text-slate-500">
-                    第 {{ c.start_index + 1 }}–{{ c.end_index + 1 }} 章 · {{ c.chapter_count }} 章
-                    <template v-if="c.subchapters.length"> · {{ c.subchapters.length }} 个子章节</template>
-                  </span>
-                </span>
-              </label>
-
-              <details v-if="c.subchapters.length" class="border-t border-ink-600/50">
-                <summary class="cursor-pointer px-3 py-1.5 text-[11px] text-slate-400 hover:text-slate-300">
-                  查看子章节
-                </summary>
-                <ul class="max-h-36 space-y-0.5 overflow-y-auto px-3 pb-2 text-[11px] text-slate-500">
-                  <li
-                    v-for="(sub, si) in c.subchapters"
-                    :key="sub.title + si"
-                    class="flex items-center justify-between gap-3"
-                    :style="{ paddingLeft: (sub.depth - 1) * 12 + 'px' }"
-                  >
-                    <span class="truncate">{{ sub.title }}</span>
-                    <span class="shrink-0 tabular-nums">第 {{ sub.start_index + 1 }}–{{ sub.end_index + 1 }} 章</span>
-                  </li>
-                </ul>
-              </details>
+            <div class="flex flex-wrap items-center gap-1.5">
+              <span class="text-[11px] text-slate-500">按层级：</span>
+              <button
+                v-for="option in depthOptions"
+                :key="option.depth"
+                class="rounded-md border border-ink-500/60 px-1.5 py-0.5 text-[11px] text-slate-400 transition hover:border-jade-500/60 hover:text-jade-300"
+                @click="selectDepth(option.depth)"
+              >
+                {{ depthLabel(option.depth) }}（{{ option.nodes.length }}）
+              </button>
+              <button class="btn-ghost !px-2 !py-1 text-xs" @click="clearAll">清空</button>
             </div>
           </div>
 
-          <p class="mt-3 text-[11px] text-slate-500">
-            未勾选的主章节不会导入；选中主章节范围内的子章节会自动归入该本书。
+          <div class="mt-2 overflow-hidden rounded-lg border border-ink-600/60 bg-ink-900/25 p-1.5">
+            <BookCandidateNode
+              v-for="node in candidates"
+              :key="node.id"
+              :node="node"
+              :selected-ids="selectedIds"
+              :expanded-ids="expandedIds"
+              @toggle="toggle"
+              @toggle-expand="toggleExpand"
+            />
+          </div>
+
+          <p class="mt-3 text-[11px] leading-relaxed text-slate-500">
+            勾选合集会把整个合集作为一本书；若要分别导入合集内的书，请展开后勾选子节点。
+            未勾选的节点不会导入。
           </p>
         </div>
 
@@ -147,8 +169,8 @@ function confirmSelected() {
           <button class="btn-ghost" @click="library.confirmPending(false)">
             <i class="fa-solid fa-book" />作为单本导入
           </button>
-          <button class="btn-primary" :disabled="!selected.length" @click="confirmSelected">
-            <i class="fa-solid fa-layer-group" />导入选中（{{ selected.length }} 本）
+          <button class="btn-primary" :disabled="!selectedNodes.length" @click="confirmSelected">
+            <i class="fa-solid fa-layer-group" />导入选中（{{ selectedNodes.length }} 本）
           </button>
         </div>
       </div>

@@ -24,9 +24,9 @@ function guard<T>(fn: () => Promise<T>): Promise<T> {
 
 export const api = {
   inspectBook: (path: string) => guard(() => invoke<BookInspection>("inspect_book", { path })),
-  ingestBook: (path: string, splitIntoBooks = false, candidateIndices?: number[]) =>
+  ingestBook: (path: string, splitIntoBooks = false, candidateIds?: string[]) =>
     guard(() =>
-      invoke<IngestResult[]>("ingest_book", { path, splitIntoBooks, candidateIndices }),
+      invoke<IngestResult[]>("ingest_book", { path, splitIntoBooks, candidateIds }),
     ),
   listBooks: () => guard(() => invoke<BookRow[]>("list_books")),
   getTimeline: (bookId: number) => guard(() => invoke<TimelineBundle>("get_timeline", { bookId })),
