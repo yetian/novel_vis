@@ -3,6 +3,12 @@
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/) 与 [Conventional Commits](https://www.conventionalcommits.org/zh-hans/)。
 每个有意义的功能实现或修复均递增 PATCH 版本。
 
+## [0.1.37] - feat(export)
+
+- 全书总览新增 JSON 导出（`book_id` / `title` / `author` / `summary`）。
+- 新增 CSV 导出：分号分隔、UTF-8 BOM，自动转义分号、引号与换行。
+- 导出按钮位于总览卡片右上角的悬停工具组，默认仍只显示摘要正文。
+
 ## [0.1.36] - feat(ux)
 
 - 时空画布、人物表、空间物品表与实体谱系支持 **Alt + 滚轮** 横向滚动；仅在容器存在横向溢出时拦截滚轮。

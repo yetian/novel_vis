@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
-import { api } from "@/api/tauri";
+import { save } from "@tauri-apps/plugin-dialog";
+import { writeTextFile } from "@tauri-apps/plugin-fs";
+import { api, isTauri } from "@/api/tauri";
 import { useLibraryStore } from "@/stores/library";
 import { useLlmStore } from "@/stores/llm";
 import { useUiStore } from "@/stores/ui";
@@ -235,6 +237,53 @@ async function generateSummary() {
     generating.value = false;
   }
 }
+
+function summaryPayload() {
+  return {
+    book_id: book.value?.id ?? null,
+    title: book.value?.title ?? "",
+    author: book.value?.author ?? null,
+    summary: bookSummary.value,
+  };
+}
+
+function csvCell(value: unknown): string {
+  const text = value == null ? "" : String(value);
+  return /[;"\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+function summaryCsv(): string {
+  const payload = summaryPayload();
+  const header = ["book_id", "title", "author", "summary"].join(";");
+  const row = [payload.book_id, payload.title, payload.author, payload.summary]
+    .map(csvCell)
+    .join(";");
+  return `\uFEFF${header}\r\n${row}\r\n`;
+}
+
+async function exportSummary(format: "json" | "csv") {
+  if (!bookSummary.value) return;
+  if (!isTauri) {
+    ui.toast("导出功能需要在桌面端中使用", "error");
+    return;
+  }
+  try {
+    const title = (book.value?.title || "book")
+      .replace(/[\\/:*?"<>|]+/g, "_")
+      .slice(0, 80);
+    const target = await save({
+      defaultPath: `${title}-全书总览.${format}`,
+      filters: [{ name: format === "json" ? "JSON" : "CSV", extensions: [format] }],
+    });
+    if (!target) return;
+    const content =
+      format === "json" ? JSON.stringify(summaryPayload(), null, 2) : summaryCsv();
+    await writeTextFile(target as string, content);
+    ui.toast(`已导出 ${format.toUpperCase()} 文件`, "success");
+  } catch (e) {
+    ui.toast(`导出失败：${errText(e)}`, "error");
+  }
+}
 </script>
 
 <template>
@@ -294,17 +343,41 @@ async function generateSummary() {
           <p class="whitespace-pre-line text-sm leading-relaxed text-slate-300">
             {{ bookSummary }}
           </p>
-          <button
-            v-if="allExtracted"
-            class="btn-ghost absolute right-3 top-3 !p-1.5 transition-opacity focus-visible:opacity-100"
-            :class="generating ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'"
-            :disabled="generating"
-            title="重新生成全书总览"
-            aria-label="重新生成全书总览"
-            @click="generateSummary"
+          <div
+            class="absolute right-3 top-3 flex items-center gap-1 rounded-lg border border-ink-500/40 bg-ink-800/95 p-0.5 shadow-sm backdrop-blur transition-opacity"
+            :class="
+              generating
+                ? 'opacity-100'
+                : 'pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100'
+            "
           >
-            <i class="fa-solid fa-rotate text-xs" :class="{ 'fa-spin': generating }" />
-          </button>
+            <button
+              class="btn-ghost !p-1.5"
+              title="导出 JSON"
+              aria-label="导出全书总览 JSON"
+              @click="exportSummary('json')"
+            >
+              <i class="fa-solid fa-file-code text-xs" />
+            </button>
+            <button
+              class="btn-ghost !p-1.5"
+              title="导出 CSV（分号分隔）"
+              aria-label="导出全书总览 CSV"
+              @click="exportSummary('csv')"
+            >
+              <i class="fa-solid fa-file-csv text-xs" />
+            </button>
+            <button
+              v-if="allExtracted"
+              class="btn-ghost !p-1.5"
+              :disabled="generating"
+              title="重新生成全书总览"
+              aria-label="重新生成全书总览"
+              @click="generateSummary"
+            >
+              <i class="fa-solid fa-rotate text-xs" :class="{ 'fa-spin': generating }" />
+            </button>
+          </div>
         </template>
 
         <template v-else>
